@@ -1,0 +1,18 @@
+# Build outputs and download caches (never committed: third-party bytes)
+/build/
+/out/
+/cache/
+/result
+/result-*
+*.img
+*.iso
+*.zip
+*.tar
+*.tar.zst
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
