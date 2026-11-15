@@ -16,3 +16,6 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Local beads settings: the sync remote names the private forge host
+.beads/config.yaml
