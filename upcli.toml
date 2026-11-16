@@ -1,7 +1,8 @@
 # The unemupc release whose CLI, upcli, imports and pushes the media sets and
-# the firmware packages (lib/publish.py; see README.md). The digest pins in
-# the manifests, of every set (media.toml) and every package (firmware.toml),
-# are what this CLI gives; moving this pin is checked by those pins.
+# the firmware packages (lib/publish.py; see docs/publishing.md). The digest
+# pins in the manifests, of every set (media.toml) and every package
+# (firmware.toml), are what this CLI gives; moving this pin is checked by
+# those pins.
 #
 # commit   the commit the release's tag points to, in full. A release build
 #          of upcli names it on the line `commit: <commit>` of `upcli
