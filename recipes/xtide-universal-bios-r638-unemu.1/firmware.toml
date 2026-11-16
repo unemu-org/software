@@ -10,7 +10,7 @@
 # and labels are unemupc's (pc_image::template::FIRMWARE), word for word, so
 # the package is the one unemupc's template build makes; the description
 # states the configuration, padding and checksum. The digest is the one the
-# pinned upcli (upcli.pin) gives it. The licence is the one the catalogue
+# pinned upcli (upcli.toml) gives it. The licence is the one the catalogue
 # records for the ROM; the source archive carries it too.
 
 [package]

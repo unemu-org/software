@@ -77,8 +77,13 @@ The rules come from unemupc's decision records (decision-26 and its
   recipes, imports their sets and packages with the pinned upcli into a
   scratch store, checks them and pushes them only when asked (see
   Publishing).
-- `upcli.pin`: the unemupc commit whose CLI, `upcli`, imports and pushes the
-  sets and packages.
+- `lib/upcli.py`: reads `upcli.toml`, checks the commit a upcli reports,
+  and fetches the pinned release binary (`python3 -I lib/upcli.py fetch
+  DIR`; see Publishing).
+- `upcli.toml`: the unemupc release whose CLI, `upcli`, imports and pushes
+  the sets and packages: its commit, tag and version, and for each
+  platform the SHA-256 and size of the release archive (`sha256`, `size`)
+  and of the `upcli` inside it (`upcli_sha256`, `upcli_size`).
 - `recipes/<recipe>/`: one directory per upstream release: `build.sh`, which
   pins the inputs and builds the outputs, and one manifest holding the
   output pins and the digest pins:
@@ -88,9 +93,10 @@ The rules come from unemupc's decision records (decision-26 and its
   - `firmware.toml`, one firmware package: `unemu/firmware/<catalogue id>`
     under its revision.
 - `tests/`: the offline self-test of the helpers, the manifest tests, the
-  pipeline tests (a fake upcli and a fake registry), the tests of the
-  FreeDOS recipe's ISO 9660 reader and an example set manifest and package
-  manifest (`tests/fixtures/example/media.toml`,
+  pipeline tests (a fake upcli and a fake registry), the tests of the pin
+  and of fetch (fake release archives served from `file://`), the tests of
+  the FreeDOS recipe's ISO 9660 reader and an example set manifest and
+  package manifest (`tests/fixtures/example/media.toml`,
   `tests/fixtures/example-firmware/firmware.toml`; no real release).
 
 Recipes cache downloads in `cache/<recipe>/`, build in a fresh directory
@@ -105,6 +111,7 @@ nix develop --command bash -c '
   bash tests/recipe-selftest.sh &&
   python3 -I tests/manifest_test.py &&
   python3 -I tests/publish_test.py &&
+  python3 -I tests/upcli_test.py &&
   python3 -I tests/iso_extract_test.py &&
   for m in tests/fixtures/*/media.toml tests/fixtures/*/firmware.toml \
       recipes/*/media.toml recipes/*/firmware.toml; do
@@ -124,12 +131,71 @@ nix develop --command bash recipes/at-bios-1.0.2-unemu.3/build.sh
 ## Publishing
 
 The sets and packages are imported and pushed with `upcli`, the command line
-of unemupc, built from the commit in `upcli.pin` (in a unemupc checkout at
-that commit: `cargo build -p cli --bin upcli`). Each set's or package's
-`digest` in its manifest is the digest that CLI gives; the pipeline refuses
-another, so moving the pin is checked by the digest pins. `upcli` at the
-pinned commit has no `--version`; when a later one reports its commit, the
-pipeline compares it with the pin.
+of unemupc, of the unemupc release pinned in `upcli.toml`. Each set's or
+package's `digest` in its manifest is the digest that CLI gives; the
+pipeline refuses another, so moving the pin is checked by the digest pins.
+
+`upcli.toml` holds exactly these keys (its comments explain them):
+`commit`, the full commit the release's tag points to; `tag` and `version`,
+the release's; and one `[archive.<target triple>]` table per platform, for
+`x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`, with the archive's
+`file` name (`unemupc-<version>-<triple>.tar.gz`), `sha256` and `size` in
+bytes, and the SHA-256 and size of its `upcli` member, `upcli_sha256` and
+`upcli_size`. `lib/upcli.py` refuses any other key, a missing or malformed
+one, and, as TOML does, a key given twice. To move the pin, take the commit
+from the release's tag, measure each archive's SHA-256 and size on the
+downloaded file and those of its `upcli` member by reading it out of the
+checked archive, without running it (never from the release's
+`SHA256SUMS`), then run the dry run below: every digest pin must still
+hold, or change deliberately.
+
+There are two ways to get the pinned upcli:
+
+- The release binary, for Linux x86_64 and macOS arm64 hosts (any other is
+  refused):
+
+  ```sh
+  nix develop --command python3 -I lib/upcli.py fetch /path/to/new-dir
+  ```
+
+  reads the host's archive into memory once, from `cache/upcli/` or else
+  downloaded from the GitHub release over HTTPS into a temporary directory,
+  and checks those bytes, the ones it goes on to use, against the size and
+  SHA-256 in `upcli.toml`, our own pins, never against the release's
+  `SHA256SUMS`. Only a checked download is written into the cache; a cached
+  copy is checked again on every run, and refused, never replaced, when it
+  differs. Only the member `unemupc-<version>-<triple>/upcli` is taken out
+  of the checked bytes: it must be the one member of that name, a regular
+  file, not a link, with the pinned size and SHA-256 of the binary, and an
+  archive that names any member by an absolute path or with a `..`
+  component is refused whole. It is written into the new directory with
+  mode 0755, and its `--version` runs (with only `PATH`, a fresh `HOME` and
+  `TMPDIR`, `LC_ALL=C` and `TZ=UTC`, in a scratch directory): unless the
+  commit line of its stdout names the pinned commit, the directory is
+  removed again. The binary's path is printed on stdout. This is the one
+  downloaded program this repository runs (`AGENTS.md`, Hard rules). Under
+  an x86_64 Python on Apple silicon (Rosetta) the host reads as macOS
+  x86_64 and is refused: pass `--triple aarch64-apple-darwin`.
+- A source build, in a clean unemupc checkout at the pinned commit, with no
+  local changes (inside unemupc's devShell; the crates need a recent
+  rustc):
+
+  ```sh
+  UNEMUPC_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build -p cli --bin upcli
+  ```
+
+  `UNEMUPC_SOURCE_COMMIT` gives the build the commit line the pipeline
+  checks; without it, a source build has none and is refused.
+
+Before anything is built, the pipeline runs `upcli --version` once and
+reads the commit line of its stdout: the one line that starts with
+`commit:`, which must be exactly `commit: ` and the 40 lower-case hex
+digits of the pinned commit. Another commit, a malformed or repeated
+commit line, a failing `--version`, or no commit line at all (a source
+build without `UNEMUPC_SOURCE_COMMIT`, or a upcli older than unemupc 0.0.2)
+refuses the run, a dry run as well as a push; there is no option to skip
+the check. Nothing else in the output is read: its third-party notices name
+upstream commits of their own.
 
 A dry run builds the selected recipes (every recipe by default; or name
 recipes, or single sets and packages by their ref), checks every output
@@ -218,10 +284,13 @@ move.
 ## Status
 
 Bootstrapping: the recipes build and verify their outputs, and the pipeline
-imports and checks the sets and packages with the pinned upcli and pushes
-them on request. The package digests equal the ones unemupc's template build
-gives at the pinned commit. Nothing is published yet, and CI is next. Open
-work is tracked in beads (`bd ready`, prefix `um`).
+imports and checks the sets and packages with the pinned upcli, that of the
+unemupc 0.0.2 release (a preview), and pushes them on request. The package
+digests equal the ones unemupc's template build gave at commit 3634f02.
+The release's macOS arm64 upcli gives the same digest for every set and
+package; its Linux x86_64 upcli is to be checked the same way in CI
+(um-7jx.6). Nothing is published yet, and CI is next. Open work is tracked
+in beads (`bd ready`, prefix `um`).
 
 ## Licence
 

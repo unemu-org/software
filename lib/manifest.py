@@ -1132,7 +1132,8 @@ def firmware_import_arguments(manifest, out_dir):
     and the package is open because the source archive is the one the
     catalogue pins. --open --license states the same licence explicitly
     (firmware_import::rom_license), so the package digest is the template
-    build's (measured at upcli.pin for every package here), and upcli
+    build's (measured at unemupc 3634f02 for every package here; the
+    upcli of the 0.0.2 release gives the same digests), and upcli
     refuses a licence other than the catalogue's. lib/publish.py also
     checks the licence the package states against the manifest's."""
     package = manifest.package

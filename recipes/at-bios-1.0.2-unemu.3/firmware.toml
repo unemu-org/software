@@ -7,7 +7,7 @@
 # (crates/assembly/src/firmware.rs). The title, description, vendor, version
 # and labels are unemupc's (pc_image::template::FIRMWARE), word for word, so
 # the package is the one unemupc's template build makes; the digest is the
-# one the pinned upcli (upcli.pin) gives it. The licence is the one the
+# one the pinned upcli (upcli.toml) gives it. The licence is the one the
 # catalogue records for the ROM; the source archive carries it too.
 
 [package]

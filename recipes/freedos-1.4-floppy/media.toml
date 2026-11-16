@@ -3,7 +3,7 @@
 # edition's own 3.5-inch 1.44M disks), :1.4-1.2m (5.25-inch 1.2M) and
 # :1.4-720k (3.5-inch 720K). build.sh fetches and checks the disks and builds
 # the extras; the pins below are its outputs in out/freedos-1.4-floppy/, and
-# each set's digest is the one the pinned upcli (upcli.pin) gives it. The
+# each set's digest is the one the pinned upcli (upcli.toml) gives it. The
 # disks are the edition's images, unmodified, in installer order; the
 # descriptions and disk labels are unemupc98's (pc_image::template::MEDIA).
 # The title deliberately differs from unemupc98's ("FreeDOS 1.4 (Floppy

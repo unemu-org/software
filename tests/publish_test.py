@@ -35,6 +35,33 @@ _spec.loader.exec_module(publish)
 manifest = publish.manifest
 
 PIN = "0123456789abcdef0123456789abcdef01234567"
+OTHER = "fedcba9876543210fedcba9876543210fedcba98"
+# A pin of a release that does not exist (lib/upcli.py checks the format).
+PIN_TOML = f"""# a comment
+commit = "{PIN}"
+tag = "v9.9.9"
+version = "9.9.9"
+
+[archive.x86_64-unknown-linux-gnu]
+file = "unemupc-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "{'a' * 64}"
+size = 1
+upcli_sha256 = "{'b' * 64}"
+upcli_size = 1
+"""
+# What a release build of upcli prints for --version, in the shape of
+# unemupc's about.rs: the third-party notice names a commit of its own.
+VERSION = f"""upcli 9.9.9
+emulator of period IBM-compatible PCs, command line
+licence: AGPL-3.0-or-later
+source: https://github.com/unemu-org/unemupc/tree/v9.9.9
+commit: {PIN}
+full licence texts: LICENSE, and THIRD-PARTY-LICENSES.md
+
+third-party components:
+
+Example 1.0 (upstream commit {OTHER})
+source: https://example.invalid/{OTHER}"""
 HOST = "registry.invalid"
 USER = "synthetic-user"
 SECRET = "synthetic-secret-value"
@@ -324,7 +351,7 @@ class Repository:
         self.base = pathlib.Path(directory)
         self.root = self.base / "repo"
         self.root.mkdir()
-        (self.root / publish.PIN_FILE).write_text(f"# a comment\n\n{PIN}\n", encoding="ascii")
+        (self.root / publish.PIN_FILE).write_text(PIN_TOML, encoding="ascii")
         self.log = self.base / "cli-log.jsonl"
         self.config = self.base / "cli-config.json"
         self.pushed = self.base / "pushed.json"
@@ -344,6 +371,7 @@ class Repository:
 
     def configure(self, **settings):
         settings.setdefault("digests", {})
+        settings.setdefault("version", VERSION)
         self.config.write_text(json.dumps(settings), encoding="utf-8")
 
     def recipe(self, name, work="demo", pins=("match", "match"), version="2.0"):
@@ -611,8 +639,8 @@ class Digests(Case):
             row = self.row(stdout, "unemu/media/demo", tag)
             self.assertEqual(row[2], fake_digest(f"unemu/media/demo:{tag}"))
             self.assertEqual(row[3:], ["dry", "run", "GPL-2.0-or-later"])
-        self.assertIn(f"upcli pin {PIN}", stderr)
-        self.assertIn("upcli --version reports no commit", stderr)
+        self.assertIn(f"upcli pin {PIN} (unemupc v9.9.9, upcli.toml)", stderr)
+        self.assertIn(f"upcli --version reports commit {PIN}, as pinned", stderr)
 
     def test_mismatch_fails(self):
         self.repo.recipe("demo", pins=("match", "sha256:" + "e" * 64))
@@ -714,30 +742,76 @@ class Digests(Case):
 class Pin(Case):
     def test_pin_file(self):
         root = self.repo.root
-        self.assertEqual(publish.read_pin(root), PIN)
-        for text in ("", "# only a comment\n", PIN[:12] + "\n", PIN.upper() + "\n", f"{PIN}\n{PIN}\n"):
+        pin = publish.read_pin(root)
+        self.assertEqual((pin.commit, pin.tag, pin.version), (PIN, "v9.9.9", "9.9.9"))
+        # tests/upcli_test.py tests the format; here, that a refused pin
+        # stops the run before upcli runs.
+        for text in ("", "# only a comment\n", PIN_TOML.replace(PIN, PIN[:12]),
+                     PIN_TOML.replace(PIN, PIN.upper()), f'commit = "{PIN}"\n' + PIN_TOML,
+                     PIN_TOML.replace("tag = ", "branch = "), PIN + "\n"):
             (root / publish.PIN_FILE).write_text(text, encoding="ascii")
             with self.assertRaises(publish.Failure):
                 publish.read_pin(root)
-
-    def test_only_a_full_reported_commit_is_compared(self):
         self.repo.recipe("demo")
-        self.repo.configure(version=f"upcli 0.1.0 ({PIN})")
+        code, _, stderr = self.repo.run()
+        self.assertEqual(code, 1)
+        self.assertIn(f"refused: {publish.PIN_FILE}: ", stderr)
+        self.assertEqual(self.repo.calls(), [])
+        (root / publish.PIN_FILE).unlink()
+        code, _, stderr = self.repo.run()
+        self.assertEqual(code, 1)
+        self.assertIn(f"refused: {publish.PIN_FILE}: cannot read", stderr)
+
+    def test_the_commit_line_names_the_pinned_commit(self):
+        recipe_dir = self.repo.recipe("demo")
         code, _, stderr = self.repo.run()
         self.assertEqual(code, 0, stderr)
         self.assertIn(f"reports commit {PIN}, as pinned", stderr)
-        other = "fedcba9876543210fedcba9876543210fedcba98"
-        self.repo.configure(version=f"upcli 0.1.0 ({other})")
-        code, _, stderr = self.repo.run()
-        self.assertEqual(code, 1)
-        self.assertIn(f"reports commit {other}", stderr)
-        # A short or embedded hash is no commit.
-        for version in (f"upcli 0.1.0 ({PIN[:9]})", "upcli 0.1.0 (fedcba987)", f"upcli 0.1.0 ({other}0)",
-                        f"upcli 0.1.0 (x{other})", "upcli 0.1.0"):
+        (recipe_dir / "build-env.txt").unlink()
+        self.repo.log.unlink()
+        refused = (
+            # Another commit.
+            (VERSION.replace(f"commit: {PIN}", f"commit: {OTHER}"), f"reports commit {OTHER}; upcli.toml pins {PIN}"),
+            # No commit line: a source build without UNEMUPC_SOURCE_COMMIT,
+            # or upcli before 0.0.2; a hash anywhere else does not count.
+            (VERSION.replace(f"commit: {PIN}\n", ""), "prints no commit line"),
+            (f"upcli 0.1.0 ({PIN})", "prints no commit line"),
+            (f"source: https://github.com/unemu-org/unemupc/tree/{PIN}", "prints no commit line"),
+            (f" commit: {PIN}", "prints no commit line"),
+            (f"Commit: {PIN}", "prints no commit line"),
+            # A malformed or repeated commit line.
+            (f"commit: {PIN.upper()}", "prints the commit line"),
+            (f"commit: {PIN[:12]}", "prints the commit line"),
+            (f"commit: {PIN}0", "prints the commit line"),
+            (f"commit:{PIN}", "prints the commit line"),
+            (f"commit:  {PIN}", "prints the commit line"),
+            (f"commit: {PIN} ", "prints the commit line"),
+            (f"commit: {PIN} (v9.9.9)", "prints the commit line"),
+            (f"commit: {PIN}\ncommit: {PIN}", "prints 2 commit lines"),
+            (f"commit: {PIN}\ncommit: {OTHER}", "prints 2 commit lines"),
+            # --version fails.
+            (None, "--version failed: unknown or extra arguments"),
+        )
+        for version, fragment in refused:
             self.repo.configure(version=version)
-            code, _, stderr = self.repo.run()
-            self.assertEqual(code, 0, version)
-            self.assertIn("reports no commit", stderr)
+            for args in ((), ("--push",)):
+                code, stdout, stderr = self.repo.run(*args)
+                self.assertEqual(code, 1, (version, args))
+                self.assertIn("refused: ", stderr, version)
+                self.assertIn(fragment, stderr, version)
+                self.assertEqual(stdout, "", version)
+                # Nothing is built, imported or pushed, and no registry is read.
+                self.assertEqual([c["argv"] for c in self.repo.calls()], [["--version"]], version)
+                self.assertFalse((recipe_dir / "build-env.txt").exists(), version)
+                self.assertEqual(self.repo.registry.calls, [])
+                self.assertEqual(list((self.repo.root / "build").iterdir()), [])
+                self.repo.log.unlink()
+
+    def test_reported_commit(self):
+        self.assertEqual(publish.upcli.reported_commit(VERSION), PIN)
+        self.assertEqual(publish.upcli.reported_commit(VERSION + "\r\n"), PIN)
+        self.assertIsNone(publish.upcli.reported_commit(""))
+        self.assertIsNone(publish.upcli.reported_commit(f"upcli 0.0.1\nsource: x/tree/{PIN}\n"))
 
 
 class Push(Case):

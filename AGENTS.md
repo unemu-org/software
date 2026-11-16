@@ -36,7 +36,13 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
 - **Upstream bytes stay upstream bytes**: disk images are byte-identical to the
   upstream release, pinned by SHA-256; files placed on built images are unmodified.
   Downloads are untrusted data: verify every hash before use, never execute anything
-  from a download, extract only listed members, into a fresh directory.
+  from a download, extract only listed members, into a fresh directory. The one
+  exception is the unemupc release archive named in `upcli.toml`: verified against
+  our own SHA-256 and size (never against the release's SHA256SUMS), only its
+  `upcli` member, itself pinned, extracted into a fresh directory, and its `commit:`
+  line equal to the pinned commit before any other use (`lib/upcli.py fetch`). Any
+  other downloaded executable stays forbidden; building upcli from source at the
+  pinned commit stays possible.
 - **Open only when every part is covered**: an SPDX expression stating the real
   licences, a licence index for every program, and for copyleft content the
   corresponding source archive linked from every copyleft layer. Documents without a

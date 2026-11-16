@@ -6,9 +6,10 @@ asked.
     python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
                               [--push | --allow-unpinned] [RECIPE|REF]...
 
-    --cli UPCLI         the upcli binary, built from the unemupc commit in
-                        upcli.pin (default: the UPCLI environment variable;
-                        a name without a slash is looked up on PATH)
+    --cli UPCLI         the upcli binary of the unemupc release in
+                        upcli.toml (lib/upcli.py fetch), or one built at its
+                        commit (default: the UPCLI environment variable; a
+                        name without a slash is looked up on PATH)
     --store DIR         import into DIR, a new directory kept afterwards
                         (default: a fresh store under build/, removed
                         afterwards)
@@ -78,14 +79,19 @@ environment of its own (PATH, a fresh HOME and TMPDIR in the run's work
 directory, LC_ALL=C, TZ=UTC) and a registries file of its own: the target
 host, public, unemu/ only.
 
-The CLI pin is the unemupc commit in upcli.pin; the run prints it and
-compares it with the full 40-digit commit `upcli --version` prints, when it
-prints one (upcli at the pinned commit has no --version). The digest pins
-are the real check that the CLI builds the sets and packages this
-repository pins.
+The CLI pin is the unemupc release in upcli.toml (lib/upcli.py). Before
+anything is built, `upcli --version` runs once, and its commit line, the
+one line `commit: <40 lower-case hex digits>`, must name the pinned commit
+(upcli.check_cli): another commit, a malformed or repeated commit line, a
+failed --version, or none at all, refuses the run. A release build prints
+that line; a source build prints it only when built with
+UNEMUPC_SOURCE_COMMIT set to the commit, and is refused without it. There
+is no way around this check, for a dry run either. The digest pins remain
+the real check that the CLI builds the sets and packages this repository
+pins.
 
-Standard library only. Run it with -I; it finds lib/manifest.py next to
-itself.
+Standard library only. Run it with -I; it finds lib/manifest.py and
+lib/upcli.py next to itself.
 """
 
 import argparse
@@ -113,21 +119,22 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 
 
-def _manifest_module():
-    """lib/manifest.py, loaded by path: -I keeps this directory off
+def _module(name):
+    """lib/<NAME>.py, loaded by path: -I keeps this directory off
     sys.path."""
-    path = HERE / "manifest.py"
-    loaded = sys.modules.get("manifest")
+    path = HERE / f"{name}.py"
+    loaded = sys.modules.get(name)
     if loaded is not None and getattr(loaded, "__file__", None) == str(path):
         return loaded
-    spec = importlib.util.spec_from_file_location("manifest", path)
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-manifest = _manifest_module()
+manifest = _module("manifest")
+upcli = _module("upcli")
 
 CLI_ENV = "UPCLI"
 USER_ENV = "UNEMU_REGISTRY_USER"
@@ -148,9 +155,7 @@ OFFICIAL_PREFIX = "unemu/"
 EXPERIMENTAL_PREFIX = "unemu/experimental/"
 # A recipe's manifest: media.toml or firmware.toml, by kind.
 MANIFEST_FILES = tuple(manifest.MANIFEST_NAMES)
-PIN_FILE = "upcli.pin"
-COMMIT = re.compile(r"[0-9a-f]{40}")
-REPORTED_COMMIT = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{40}(?![0-9A-Za-z])")
+PIN_FILE = upcli.PIN_FILE
 RUN = re.compile(r"[1-9][0-9]{0,19}")
 # What `upcli image media show` and `upcli image firmware show` say last of
 # a set or package the guard lets into unemu/.
@@ -453,17 +458,11 @@ def anonymous_digest(host, repository, tag, environ=os.environ, plain_http=False
 
 
 def read_pin(root):
-    """The unemupc commit in upcli.pin: one line of 40 lower-case hex digits;
-    blank lines and lines starting with '#' are comments."""
-    path = root / PIN_FILE
+    """The unemupc release upcli.toml pins (upcli.read_pin)."""
     try:
-        lines = path.read_text(encoding="ascii").splitlines()
-    except (OSError, UnicodeDecodeError) as error:
-        raise Failure(f"{PIN_FILE}: cannot read: {error}") from None
-    values = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
-    if len(values) != 1 or not COMMIT.fullmatch(values[0]):
-        raise Failure(f"{PIN_FILE}: expected one line holding a full 40-digit commit hash")
-    return values[0]
+        return upcli.read_pin(root / PIN_FILE)
+    except upcli.Refusal as refusal:
+        raise Failure(str(refusal)) from None
 
 
 def run_cli(cli, args, env):
@@ -473,16 +472,6 @@ def run_cli(cli, args, env):
                               env=env, check=False)
     except OSError as error:
         raise Failure(f"cannot run {cli}: {error.strerror or error}") from None
-
-
-def reported_commit(cli, env):
-    """The full commit `upcli --version` prints, or None when it prints
-    none (or fails)."""
-    done = run_cli(cli, ["--version"], env)
-    if done.returncode != 0:
-        return None
-    found = REPORTED_COMMIT.search(done.stdout)
-    return found.group(0) if found else None
 
 
 def last_line(text):
@@ -950,19 +939,13 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
     }
     mode = "push" if options.push else "dry run"
     log(f"upcli {cli}")
-    log(f"upcli pin {pin} (unemupc commit, {PIN_FILE})")
+    log(f"upcli pin {pin.commit} (unemupc {pin.tag}, {PIN_FILE})")
     try:
-        commit = reported_commit(cli, env)
-    except Failure as failure:
-        log(f"refused: {failure}")
+        upcli.check_cli(cli, pin.commit, env)
+    except upcli.Refusal as refusal:
+        log(f"refused: {refusal}")
         return 1
-    if commit is None:
-        log("upcli --version reports no commit; the digest pins are the check")
-    elif commit != pin:
-        log(f"refused: upcli --version reports commit {commit}, {PIN_FILE} holds {pin}")
-        return 1
-    else:
-        log(f"upcli --version reports commit {commit}, as pinned")
+    log(f"upcli --version reports commit {pin.commit}, as pinned")
     log(f"store {store}")
 
     for recipe in dict.fromkeys(item.recipe for item in items):
