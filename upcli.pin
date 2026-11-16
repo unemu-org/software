@@ -1,0 +1,5 @@
+# The unemupc commit whose CLI, upcli, imports and pushes the sets
+# (lib/publish.py; see README.md). Build it there with
+# `cargo build -p cli --bin upcli`. The manifests' set digest pins are what
+# this CLI gives; moving the pin is checked by those pins.
+3634f02f4006c2ce77239091af5937cbbf616da9

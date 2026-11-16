@@ -7,6 +7,11 @@
     python3 -I lib/manifest.py refs MANIFEST... every unemu/media/<work>:<tag>;
                                                 exit 1 if two sets of the
                                                 manifests share one
+    python3 -I lib/manifest.py sets MANIFEST OUT_DIR
+                                                every set as JSON: its ref,
+                                                licence, digest pin and the
+                                                upcli import arguments, the
+                                                outputs found in OUT_DIR
 
 A manifest (recipes/<recipe>/media.toml) describes every installation set a
 recipe feeds, as unemupc98's `image media import` takes them
@@ -47,7 +52,11 @@ repository unemu/media/<work>, each under its own derived tag.
 
     [[set]]                   title (the work's title only), description,
                               format (1.44M, 1.2M, 720K, 360K or iso-2048),
-                              revision (optional, from 1: a corrected set)
+                              revision (optional, from 1: a corrected set),
+                              digest (optional, "sha256:<64 hex>": the set
+                              digest the pinned upcli gives; lib/publish.py
+                              refuses another and never pushes a set
+                              without one)
     [[set.disk]]              path, sha256, label; in installer order
 
 The tag is derived, never written: VERSION[-EDITION_SLUG][-FORMAT][-rN], the
@@ -62,6 +71,7 @@ it does. It reads the manifest and nothing else; it never opens the outputs.
 """
 
 import dataclasses
+import json
 import os.path
 import re
 import sys
@@ -94,6 +104,8 @@ LABEL_KINDS = ("game", "operating-system", "application", "utility", "developmen
 LABEL_LICENCE_CLASSES = ("open-source", "freeware", "shareware", "public-domain")
 
 SHA256 = re.compile(r"[0-9a-f]{64}")
+# An OCI digest as upcli prints a set's: the manifest's SHA-256.
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 # An OCI distribution path component (unemupc98 image_store::store).
 REPOSITORY = re.compile(r"[a-z0-9]+(?:(?:\.|_|__|-+)[a-z0-9]+)*")
 MAX_REPOSITORY = 255
@@ -180,6 +192,8 @@ class MediaSet:
     format: str
     revision: int
     disks: tuple
+    # The set digest pin, "sha256:<hex>", or None.
+    digest: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -699,11 +713,16 @@ def derived_tag(release, media_format, revision):
 
 
 def parse_set(value, where, release, warnings):
-    fields(value, where, ("title", "description", "format", "disk"), ("revision",))
+    fields(value, where, ("title", "description", "format", "disk"), ("revision", "digest"))
     media_format = choice(value["format"], f"{where}.format", FORMATS)
     revision = value.get("revision", 1)
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise Refusal(f"{where}.revision: expected a whole number from 1")
+    digest = None
+    if "digest" in value:
+        digest = string(value["digest"], f"{where}.digest")
+        if not DIGEST.fullmatch(digest):
+            raise Refusal(f"{where}.digest: expected 'sha256:' and 64 lowercase hexadecimal digits")
     tag = derived_tag(release, media_format, revision)
     if not TAG.fullmatch(tag):
         raise Refusal(f"{where}: the derived tag {tag!r} is not a valid tag (at most 128 bytes)")
@@ -730,6 +749,7 @@ def parse_set(value, where, release, warnings):
         format=media_format,
         revision=revision,
         disks=tuple(disks),
+        digest=digest,
     )
 
 
@@ -834,6 +854,63 @@ def open_statement(manifest):
     return OpenStatement(release.license, release.terms, release.source)
 
 
+def import_arguments(request, statement):
+    """The arguments of `upcli image media import` (after the program name)
+    that import REQUEST opened by STATEMENT, without --store and --create:
+    the disks in installer order, each with its label and its format, the
+    extras with their DOS names, the title record, the set labels and the
+    open statement. Repeated options keep the manifest's order, which the
+    set digest depends on. An explicit --format asserts the manifest's
+    format; upcli builds the same set from it as from the format it detects
+    by size (media_import::plan_with)."""
+    title = request.title
+    args = ["image", "media", "import"]
+    args += [source.path for source in request.media]
+    args += ["--title", title.title, "--tag", request.tag]
+    for i, source in enumerate(request.media, 1):
+        args += ["--label", f"{i}={source.label}", "--format", f"{i}={source.format}"]
+    for extra in request.extras:
+        args += ["--extra", f"{extra.path}:{extra.dos_name}"]
+    for publisher in title.publishers:
+        args += ["--publisher", publisher]
+    for developer in title.developers:
+        args += ["--developer", developer]
+    args += ["--year", str(title.release_year)]
+    for genre in title.genres:
+        args += ["--genre", genre]
+    args += ["--platform", title.platform, "--description", title.description]
+    args += ["--version", title.version]
+    if title.edition is not None:
+        args += ["--edition", title.edition]
+    for label in request.labels:
+        args += ["--set-label", label]
+    args += ["--open", "--license", statement.license, "--license-text", statement.terms]
+    if statement.source is not None:
+        args += ["--source", statement.source]
+    if not request.compress:
+        args.append("--no-compress")
+    return args
+
+
+def describe_sets(manifest, out_dir):
+    """Every set of MANIFEST as `sets` prints it: its ref, repository and
+    tag, the licence expression, the digest pin (None without one) and the
+    import arguments, with the outputs' paths joined to OUT_DIR."""
+    statement = open_statement(manifest)
+    described = []
+    for media_set in manifest.sets:
+        request = import_request(manifest, media_set.tag, out_dir)
+        described.append({
+            "ref": request.tag,
+            "repository": manifest.release.repository,
+            "tag": media_set.tag,
+            "license": statement.license,
+            "digest": media_set.digest,
+            "import": import_arguments(request, statement),
+        })
+    return described
+
+
 def refs(manifests):
     """Every set's reference, unemu/media/<work>:<tag>, across MANIFESTS
     (pairs of a name and a checked Manifest), in order; a Refusal when two
@@ -852,10 +929,22 @@ def refs(manifests):
     return result
 
 
-USAGE = "usage: python3 -I lib/manifest.py check|pins MANIFEST, or refs MANIFEST..."
+USAGE = (
+    "usage: python3 -I lib/manifest.py check|pins MANIFEST, refs MANIFEST..., "
+    "or sets MANIFEST OUT_DIR"
+)
 
 
 def main(argv):
+    if len(argv) == 4 and argv[1] == "sets":
+        try:
+            checked = load(argv[2])
+        except Refusal as refusal:
+            print(f"{argv[2]}: {refusal}", file=sys.stderr)
+            return 1
+        described = describe_sets(checked, os.path.abspath(argv[3]))
+        print(json.dumps(described, indent=2, ensure_ascii=True))
+        return 0
     if len(argv) >= 3 and argv[1] == "refs":
         checked = []
         for path in argv[2:]:

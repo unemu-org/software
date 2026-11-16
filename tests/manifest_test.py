@@ -7,6 +7,7 @@ each refusal rule fires.
 """
 
 import importlib.util
+import json
 import pathlib
 import subprocess
 import sys
@@ -210,6 +211,84 @@ class Accepted(unittest.TestCase):
         with self.assertRaises(manifest.Refusal):
             manifest.import_request(checked, "1.0-1.2m", "out/example")
 
+    def test_digest_pin(self):
+        pin = "sha256:" + "0123456789abcdef" * 4
+        checked = manifest.validate(changed(lambda d: d["set"][0].update(digest=pin)))
+        self.assertEqual([s.digest for s in checked.sets], [pin, None])
+        self.assertEqual([s.digest for s in manifest.load(EXAMPLE).sets], [None, None])
+
+    def test_import_arguments(self):
+        checked = manifest.load(EXAMPLE)
+        request = manifest.import_request(checked, "1.0-720k", "/out/example")
+        self.assertEqual(
+            manifest.import_arguments(request, manifest.open_statement(checked)),
+            [
+                "image", "media", "import", "/out/example/example-720.img",
+                "--title", "Example", "--tag", "unemu/media/example:1.0-720k",
+                "--label", "1=Disk 1 of 1 - example installation (example-720.img)",
+                "--format", "1=720K",
+                "--extra", "/out/example/LICENSE.TXT:LICENSE.TXT",
+                "--extra", "/out/example/example-src.tar:EXSRC.TAR",
+                "--publisher", "Example Publisher", "--developer", "Example Developer",
+                "--year", "1993", "--genre", "utility", "--platform", "DOS",
+                "--description", checked.sets[1].description,
+                "--version", "1.0", "--edition", "Self-test Edition",
+                "--set-label", "utility", "--set-label", "open-source", "--set-label", "self-test",
+                "--open", "--license", "GPL-2.0-or-later", "--license-text", "LICENSE.TXT",
+                "--source", "example-src.tar",
+            ],
+        )
+
+        # Every disk in installer order with its label and format; repeated
+        # options in the manifest's order; no edition or source when absent.
+        def change(d):
+            shareware(d)
+            del d["release"]["edition"]
+            d["release"]["publishers"] = ["B", "A"]
+            d["set"][0]["disk"].append({"path": "two.img", "sha256": HASH, "label": "Second"})
+        checked = manifest.validate(changed(change))
+        args = manifest.import_arguments(
+            manifest.import_request(checked, "1.0", "/o"), manifest.open_statement(checked)
+        )
+        self.assertEqual(args[3:5], ["/o/example-1440.img", "/o/two.img"])
+        self.assertEqual(
+            args[9:17],
+            ["--label", "1=Disk 1 of 1 - example installation (example-1440.img)", "--format", "1=1.44M",
+             "--label", "2=Second", "--format", "2=1.44M"],
+        )
+        self.assertLess(args.index("B"), args.index("A"))
+        self.assertNotIn("--edition", args)
+        self.assertNotIn("--source", args)
+        self.assertEqual(args[-5:], ["--open", "--license", "LicenseRef-example-vendor-terms",
+                                     "--license-text", "VENDOR.DOC"])
+
+    def test_cli_sets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "pinned.toml"
+            pin = "sha256:" + "f" * 64
+            text = EXAMPLE.read_text(encoding="utf-8").replace(
+                'format = "1.44M"\n\n', f'format = "1.44M"\ndigest = "{pin}"\n\n', 1
+            )
+            path.write_text(text, encoding="utf-8")
+            result = run("sets", str(path), "out/example")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        described = json.loads(result.stdout)
+        self.assertEqual([d["ref"] for d in described],
+                         ["unemu/media/example:1.0", "unemu/media/example:1.0-720k"])
+        self.assertEqual([d["digest"] for d in described], [pin, None])
+        self.assertEqual({d["repository"] for d in described}, {"unemu/media/example"})
+        self.assertEqual([d["tag"] for d in described], ["1.0", "1.0-720k"])
+        self.assertEqual({d["license"] for d in described}, {"GPL-2.0-or-later"})
+        checked = manifest.load(EXAMPLE)
+        out_dir = str(pathlib.Path("out/example").resolve())
+        self.assertEqual(
+            described[1]["import"],
+            manifest.import_arguments(
+                manifest.import_request(checked, "1.0-720k", out_dir), manifest.open_statement(checked)
+            ),
+        )
+        self.assertEqual(run("sets", str(EXAMPLE)).returncode, 2)
+
 
 class Refused(unittest.TestCase):
     def refused(self, change, fragment):
@@ -411,6 +490,12 @@ class Refused(unittest.TestCase):
                          "set[1].disk[1].sha256")
             self.refused(lambda d, digest=digest: self.first_extra(d).update(sha256=digest),
                          "release.extra[1].sha256")
+
+    def test_set_digest(self):
+        for digest in ("0" * 64, "sha256:" + "0" * 63, "sha256:" + "0" * 65, "sha256:" + "A" * 64,
+                       "SHA256:" + "0" * 64, "sha512:" + "0" * 64, " sha256:" + "0" * 64,
+                       "sha256:" + "0" * 64 + "\n", "sha256:", "", 0, ["sha256:" + "0" * 64]):
+            self.refused(lambda d, digest=digest: d["set"][1].update(digest=digest), "set[2].digest")
 
     def test_paths_inside_out(self):
         for path in ("../example-1440.img", "/example-1440.img", "a/../../b.img", "a//b.img",
