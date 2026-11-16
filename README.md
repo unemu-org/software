@@ -44,8 +44,9 @@ The rules come from unemupc98's decision records (decision-26 and its
   the sets it feeds, holding the output pins. Every set of a manifest is one
   work, `unemu/media/<work>`, under a tag derived from the upstream version,
   the edition, the format and the revision.
-- `tests/`: the offline self-test of the helpers, the manifest tests and an
-  example manifest (`tests/fixtures/`, no real release).
+- `tests/`: the offline self-test of the helpers, the manifest tests, the
+  tests of the FreeDOS recipe's ISO 9660 reader and an example manifest
+  (`tests/fixtures/`, no real release).
 
 Recipes cache downloads in `cache/<recipe>/`, build in a fresh directory
 under `build/`, and install their outputs into `out/<recipe>/` only once every
@@ -55,17 +56,34 @@ Run the checks inside the devShell:
 
 ```sh
 nix develop --command bash -c '
-  shellcheck lib/recipe.sh tests/*.sh &&
+  shellcheck -x lib/recipe.sh tests/*.sh recipes/*/build.sh &&
   bash tests/recipe-selftest.sh &&
   python3 -I tests/manifest_test.py &&
-  python3 -I lib/manifest.py check tests/fixtures/example.toml'
+  python3 -I tests/iso_extract_test.py &&
+  for m in tests/fixtures/example.toml recipes/*/media.toml; do
+    python3 -I lib/manifest.py check "$m" || exit 1
+  done &&
+  python3 -I lib/manifest.py refs recipes/*/media.toml'
 ```
+
+Build one recipe's outputs (the first run downloads its pinned inputs; a run
+whose outputs already match their pins stops at once, without the network):
+
+```sh
+nix develop --command bash recipes/freedos-1.4-floppy/build.sh
+```
+
+## Recipes
+
+| Recipe | Sets |
+| --- | --- |
+| `recipes/freedos-1.4-floppy/` | FreeDOS 1.4 Floppy Edition: `unemu/media/freedos:1.4` (1.44M), `:1.4-1.2m`, `:1.4-720k` |
 
 ## Status
 
-Bootstrapping. The first recipe is the official FreeDOS 1.4 Floppy Edition
-(1.44M, 1.2M and 720K sets), moving here from unemupc98. Open work is tracked
-in beads (`bd ready`, prefix `um`).
+Bootstrapping: the recipes build and verify their outputs; importing and
+publishing the sets is next. Open work is tracked in beads (`bd ready`,
+prefix `um`).
 
 ## Licence
 
