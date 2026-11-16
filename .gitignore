@@ -9,6 +9,8 @@
 *.zip
 *.tar
 *.tar.zst
+# Python bytecode the tests' imports write
+__pycache__/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

@@ -21,6 +21,7 @@
             pkgs.zstd
             pkgs.python3
             pkgs.git
+            pkgs.shellcheck
           ];
           # Pinned CA roots for curl only; downloads are hash-checked anyway.
           CURL_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";

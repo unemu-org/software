@@ -30,6 +30,37 @@ The rules come from unemupc98's decision records (decision-26 and its
 2026-11-15 amendments, decision-27), mirrored in this repository's
 `AGENTS.md` and beads memories.
 
+## Layout
+
+- `lib/recipe.sh`: the Bash helpers every recipe sources: environment
+  clearing, verified downloads, listed-member zip extraction, deterministic
+  FAT images and source tars, pinned git exports, and the pin checks.
+- `lib/manifest.py`: checks a set manifest, lists the sets' derived tags and
+  prints its output pins (`python3 -I lib/manifest.py check|pins MANIFEST`);
+  `refs MANIFEST...` lists every set's `unemu/media/<work>:<tag>` and refuses
+  one that two sets share across manifests.
+- `recipes/<recipe>/`: one directory per upstream release: `build.sh`, which
+  pins the inputs and builds the outputs, and `media.toml`, the manifest of
+  the sets it feeds, holding the output pins. Every set of a manifest is one
+  work, `unemu/media/<work>`, under a tag derived from the upstream version,
+  the edition, the format and the revision.
+- `tests/`: the offline self-test of the helpers, the manifest tests and an
+  example manifest (`tests/fixtures/`, no real release).
+
+Recipes cache downloads in `cache/<recipe>/`, build in a fresh directory
+under `build/`, and install their outputs into `out/<recipe>/` only once every
+pin matches; none of these is committed.
+
+Run the checks inside the devShell:
+
+```sh
+nix develop --command bash -c '
+  shellcheck lib/recipe.sh tests/*.sh &&
+  bash tests/recipe-selftest.sh &&
+  python3 -I tests/manifest_test.py &&
+  python3 -I lib/manifest.py check tests/fixtures/example.toml'
+```
+
 ## Status
 
 Bootstrapping. The first recipe is the official FreeDOS 1.4 Floppy Edition
