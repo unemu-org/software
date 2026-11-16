@@ -40,7 +40,10 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
 - **Open only when every part is covered**: an SPDX expression stating the real
   licences, a licence index for every program, and for copyleft content the
   corresponding source archive linked from every copyleft layer. Documents without a
-  stated licence are not attached. When in doubt, the set is not published.
+  stated licence are not attached. A firmware package is one program: it is open
+  with an SPDX statement equal to the licence unemupc's firmware catalogue records
+  for its ROM and, for copyleft firmware, its corresponding source archive attached.
+  When in doubt, the set or package is not published.
 - **Reproducible**: the same recipe gives the same images, archives and set digests
   on every run and host; no wall clock, no locale or user-config dependence (run
   mtools with an empty HOME, LC_ALL pinned, TZ=UTC).
