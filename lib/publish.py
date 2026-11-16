@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build the media sets, import them with the pinned unemupc CLI (upcli) into
-a scratch store, check them, and push them only when asked.
+"""Build the media sets and firmware packages, import them with the pinned
+unemupc CLI (upcli) into a scratch store, check them, and push them only when
+asked.
 
     python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
                               [--push | --allow-unpinned] [RECIPE|REF]...
@@ -12,44 +13,56 @@ a scratch store, check them, and push them only when asked.
                         (default: a fresh store under build/, removed
                         afterwards)
     --experimental RUN  target <host>/unemu/experimental/media/<work>:
-                        <media-tag>.ci<RUN> (RUN: the CI run number, from 1)
-                        instead of <host>/unemu/media/<work>:<media-tag>
-    --push              push every checked set; without it nothing is
-                        written to any registry, and nothing is read from one
-    --allow-unpinned    a dry run that passes with sets whose manifest pins
-                        no digest yet (to measure a new recipe's digests);
-                        never with --push
-    RECIPE|REF          a recipe (recipes/<recipe>/) or one set's ref
-                        (unemu/media/<work>:<tag>); default: every recipe
+                        <media-tag>.ci<RUN> and <host>/unemu/experimental/
+                        firmware/<id>:<revision>.ci<RUN> (RUN: the CI run
+                        number, from 1) instead of <host>/unemu/media/<work>:
+                        <media-tag> and <host>/unemu/firmware/<id>:<revision>
+    --push              push every checked set and package; without it
+                        nothing is written to any registry, and nothing is
+                        read from one
+    --allow-unpinned    a dry run that passes with sets or packages whose
+                        manifest pins no digest yet (to measure a new
+                        recipe's digests); never with --push
+    RECIPE|REF          a recipe (recipes/<recipe>/), one set's ref
+                        (unemu/media/<work>:<tag>) or one package's ref
+                        (unemu/firmware/<id>:<revision>); default: every
+                        recipe
 
-The steps, in order; a set that fails one is not taken further:
+Each recipe has one manifest: media.toml, the sets of an installation media
+release, or firmware.toml, one firmware package (lib/manifest.py). The
+steps, in order; a set or package that fails one is not taken further:
 
  1. Every recipe's manifest checked as `manifest.py check` does, and every
-    set's ref as `manifest.py refs` does across all of them (the same
-    functions, called here). A refusal stops the run before anything else.
+    ref as `manifest.py refs` does across all of them (the same functions,
+    called here). A refusal stops the run before anything else.
  2. Each selected recipe's build.sh (whose fast path stops at once when its
     outputs already match their pins), then every output of the recipe
     checked here against its pin.
  3. Each set imported with `upcli image media import` (the arguments are
-    manifest.import_arguments), then `upcli image media show`, whose last
-    line must report the set pushable to unemu/, and `upcli image push
-    --dry-run` against the target, whose guard must say allowed. Both run
-    offline. The import, the show and the dry run must name the same ref,
-    target and set digest.
- 4. The set digest compared with the manifest's digest pin: another digest
-    fails the run. A set without a pin is reported with its digest, is
-    never pushed, and fails the run unless --allow-unpinned is given.
- 5. With --push, and only when every selected set passed and is pinned: for
-    each set, an anonymous HTTPS read of the target tag on the registry
+    manifest.import_arguments), then checked with `upcli image media show`;
+    each package imported with `upcli image firmware import --for` (the
+    arguments are manifest.firmware_import_arguments), then checked with
+    `upcli image firmware show`: its title, vendor, version, description,
+    labels, ROM, source archive and every layer's licence must be the
+    manifest's. Either show's last line must report it pushable to unemu/.
+    Then `upcli image push --dry-run` against the target, whose guard must
+    say allowed. All run offline. The import, the show and the dry run must
+    name the same store tag, target and digest.
+ 4. The digest compared with the manifest's digest pin: another digest fails
+    the run. One without a pin is reported with its digest, is never
+    pushed, and fails the run unless --allow-unpinned is given.
+ 5. With --push, and only when everything selected passed and is pinned:
+    for each, an anonymous HTTPS read of the target tag on the registry
     first (anonymous_digest). A missing tag is pushed with `upcli image
     push` (never --move) and read back: a read-back that fails or names
-    another digest leaves the set `unconfirmed` (pushed, not confirmed). A
-    tag that already names the same digest is skipped; a tag that names
-    another digest is refused. Any failure fails the run, and nothing after
-    it is pushed; every set still gets its row in the summary.
+    another digest leaves it `unconfirmed` (pushed, not confirmed). A tag
+    that already names the same digest is skipped; a tag that names another
+    digest is refused: a media tag and a package revision never move. Any
+    failure fails the run, and nothing after it is pushed; everything still
+    gets its row in the summary. The `latest` alias is never pushed.
 
 A summary table (repository, tag, digest, outcome, licence) goes to
-stdout, progress to stderr. Exit status: 0 when every selected set passed
+stdout, progress to stderr. Exit status: 0 when everything selected passed
 (and, with --push, is on the registry), 1 otherwise, 2 for a usage error.
 
 The registry host is UNEMU_REGISTRY_HOST, checked as upcli checks one: a
@@ -67,8 +80,9 @@ host, public, unemu/ only.
 
 The CLI pin is the unemupc commit in upcli.pin; the run prints it and
 compares it with the full 40-digit commit `upcli --version` prints, when it
-prints one (upcli at the pinned commit has no --version). The set digest
-pins are the real check that the CLI builds the sets this repository pins.
+prints one (upcli at the pinned commit has no --version). The digest pins
+are the real check that the CLI builds the sets and packages this
+repository pins.
 
 Standard library only. Run it with -I; it finds lib/manifest.py next to
 itself.
@@ -127,14 +141,23 @@ RECIPE_HIDDEN_PREFIX = "UNEMU"
 RECIPE_HIDDEN_WORDS = ("PASSWORD", "TOKEN", "SECRET", "CREDENTIAL")
 # upcli's family default registry (image_registry::reference::DEFAULT_REGISTRY).
 DEFAULT_HOST = "registry.unemu.dev"
-EXPERIMENTAL_NAMESPACE = "unemu/experimental/media"
+# Every repository lives in unemu/; an experimental target puts
+# experimental/ after it (unemu/experimental/media/<work>,
+# unemu/experimental/firmware/<id>).
+OFFICIAL_PREFIX = "unemu/"
+EXPERIMENTAL_PREFIX = "unemu/experimental/"
+# A recipe's manifest: media.toml or firmware.toml, by kind.
+MANIFEST_FILES = tuple(manifest.MANIFEST_NAMES)
 PIN_FILE = "upcli.pin"
 COMMIT = re.compile(r"[0-9a-f]{40}")
 REPORTED_COMMIT = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{40}(?![0-9A-Za-z])")
 RUN = re.compile(r"[1-9][0-9]{0,19}")
-# What `upcli image media show` says last of a set the guard lets into
-# unemu/.
+# What `upcli image media show` and `upcli image firmware show` say last of
+# a set or package the guard lets into unemu/.
 PUSHABLE = "push\tany configured registry, including unemu/"
+# The licence of a package's config and README layers
+# (pc_image::firmware::METADATA_LICENSE).
+FIRMWARE_METADATA_LICENSE = "CC0-1.0"
 # The manifest types the anonymous read accepts: upcli pushes an OCI image
 # manifest; anything else at the tag (an index, a Docker schema 2 manifest
 # or list) is read too, and refused by its digest. A registry that cannot
@@ -167,11 +190,12 @@ class RegistryError(Exception):
 
 @dataclasses.dataclass
 class Item:
-    """One selected set and what became of it."""
+    """One selected set or package (a manifest.Artifact) and what became of
+    it; REPOSITORY and TAG are its target's."""
 
     recipe: str
     checked: object
-    media_set: object
+    artifact: object
     repository: str
     tag: str
     outcome: str = "not checked"
@@ -181,8 +205,14 @@ class Item:
 
     @property
     def ref(self):
-        """The set's own ref, also its tag in the scratch store."""
-        return f"{self.checked.release.repository}:{self.media_set.tag}"
+        """The set's or package's own ref, unemu/<kind>/<name>:<tag>."""
+        return self.artifact.ref
+
+    @property
+    def store_tag(self):
+        """Its tag in the scratch store: a set's ref, a package's
+        firmware/<id>:1."""
+        return self.artifact.store_tag
 
     def fail(self, outcome, detail):
         self.outcome, self.detail, self.failed = outcome, detail, True
@@ -538,34 +568,141 @@ def check_outputs(checked, out_dir):
             raise Failure(f"output {path}: SHA-256 {digest.hexdigest()}, pinned {expected}")
 
 
-def import_set(cli, item, out_dir, store, env):
-    """Import the set and check `media show`; the set digest, the same in
-    both."""
-    request = manifest.import_request(item.checked, item.media_set.tag, str(out_dir))
-    statement = manifest.open_statement(item.checked)
-    args = manifest.import_arguments(request, statement) + ["--store", str(store), "--create"]
+def import_artifact(cli, item, out_dir, store, env):
+    """Import the set or package into STORE and check what upcli shows of
+    it; its digest."""
+    args = [*item.artifact.arguments, "--store", str(store), "--create"]
     done = run_cli(cli, args, env)
     if done.returncode != 0:
         raise Failure(f"import: {why(done)}")
-    reported = last_line(done.stdout).split("\t")
-    if len(reported) != 2 or reported[0] != item.ref or not manifest.DIGEST.fullmatch(reported[1]):
-        raise Failure(f"import: unexpected last line {last_line(done.stdout)!r}")
-    digest = reported[1]
+    if item.artifact.kind == "firmware":
+        digest = imported_package(item, done.stdout)
+        check_firmware_show(cli, item, digest, out_dir, store, env)
+    else:
+        digest = imported_set(item, done.stdout)
+        check_media_show(cli, item, digest, store, env)
+    return digest
 
-    done = run_cli(cli, ["image", "media", "show", item.ref, "--store", str(store)], env)
+
+def imported_set(item, stdout):
+    """The set digest `image media import` reports last, for the set's
+    ref."""
+    reported = last_line(stdout).split("\t")
+    if len(reported) != 2 or reported[0] != item.ref or not manifest.DIGEST.fullmatch(reported[1]):
+        raise Failure(f"import: unexpected last line {last_line(stdout)!r}")
+    return reported[1]
+
+
+def check_media_show(cli, item, digest, store, env):
+    done = run_cli(cli, ["image", "media", "show", item.store_tag, "--store", str(store)], env)
     if done.returncode != 0:
         raise Failure(f"media show: {why(done)}")
     lines = done.stdout.splitlines()
     first = lines[0].split("\t") if lines else []
-    if len(first) != 3 or first[:2] != [item.ref, digest]:
-        raise Failure(f"media show: the first line {lines[:1]} does not name {item.ref} {digest}")
+    if len(first) != 3 or first[:2] != [item.store_tag, digest]:
+        raise Failure(f"media show: the first line {lines[:1]} does not name {item.store_tag} {digest}")
     if lines[-1] != PUSHABLE:
         raise Failure(f"media show: the last line is {lines[-1]!r}, not {PUSHABLE!r}")
-    return digest
+
+
+def imported_package(item, stdout):
+    """The package digest `image firmware import --for` reports: its output
+    must be exactly the complete line for the store tag and the pinned ROM,
+    then the imported line. Anything else, a note above all (one that keeps
+    the ROM user-supplied, say), or "already imported", fails."""
+    tag, rom = item.store_tag, item.checked.rom.sha256
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if lines[:1] != [f"complete\t{tag}\t{rom}"] or len(lines) != 2:
+        raise Failure(f"import: unexpected output {lines!r}; expected the complete line of {tag} "
+                      "and the imported line only")
+    reported = lines[1].split("\t")
+    if len(reported) != 3 or reported[:2] != ["imported", tag] or not manifest.DIGEST.fullmatch(reported[2]):
+        raise Failure(f"import: unexpected last line {lines[1]!r}")
+    return reported[2]
+
+
+def rust_debug(text):
+    """TEXT as upcli's show prints a string, Rust's Debug of a str: in double
+    quotes, with backslash, double quote and control characters escaped.
+    Rust also escapes some non-ASCII characters (unprintable ones, grapheme
+    extenders), which are kept here: such a text then fails the comparison,
+    never passes it falsely."""
+    escapes = {"\\": "\\\\", '"': '\\"', "\t": "\\t", "\r": "\\r", "\n": "\\n", "\0": "\\0"}
+    out = []
+    for char in text:
+        if char in escapes:
+            out.append(escapes[char])
+        elif char < " " or char == "\x7f":
+            out.append(f"\\u{{{ord(char):x}}}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
+
+
+def file_size(path):
+    try:
+        return os.stat(path).st_size
+    except OSError as error:
+        raise Failure(f"cannot read {path}: {error.strerror}") from None
+
+
+def check_firmware_show(cli, item, digest, out_dir, store, env):
+    """`upcli image firmware show` of the imported package states the
+    manifest's package (pc-image's CLI image/firmware.rs, show): the store
+    tag, digest and title first; one ROM, the pinned one with its size; the
+    vendor, version, description and labels (sorted, as the import stores
+    them); one source archive, the pinned one with its file name, format and
+    size; every layer open, the ROM and the source archive under the
+    manifest's licence and the config and README under CC0-1.0; and last,
+    pushable to unemu/."""
+    package, rom, source = item.checked.package, item.checked.rom, item.checked.source
+    done = run_cli(cli, ["image", "firmware", "show", item.store_tag, "--store", str(store)], env)
+    if done.returncode != 0:
+        raise Failure(f"firmware show: {why(done)}")
+    lines = done.stdout.splitlines()
+
+    def refuse(what):
+        raise Failure(f"firmware show: {what}")
+
+    if not lines or lines[0].split("\t") != [item.store_tag, digest, rust_debug(package.title)]:
+        refuse(f"the first line {lines[:1]} does not name {item.store_tag} {digest} {package.title!r}")
+    rows = [line.split("\t") for line in lines[1:]]
+    roms = [row for row in rows if len(row) == 4 and manifest.SHA256.fullmatch(row[3])]
+    rom_size = file_size(os.path.join(out_dir, *rom.path.split("/")))
+    if len(roms) != 1 or roms[0][2:] != [str(rom_size), rom.sha256]:
+        refuse(f"the ROM lines {roms} are not the one ROM {rom.sha256} of {rom_size} bytes")
+    labels = "[" + ", ".join(rust_debug(label) for label in sorted(package.labels)) + "]"
+    for key, value in (("vendor", rust_debug(package.vendor)), ("version", rust_debug(package.version)),
+                       ("description", rust_debug(package.description)), ("labels", labels)):
+        found = [row[1:] for row in rows if row[0] == key]
+        if found != [[value]]:
+            refuse(f"{key} is {found}, not [{value!r}]")
+    source_size = file_size(os.path.join(out_dir, *source.path.split("/")))
+    source_format = "zip" if source.path.endswith(".zip") else "tar"
+    sources = [row[1:5] for row in rows if row[0] == "source"]
+    expected = [rust_debug(manifest.file_name(source.path)), source_format, str(source_size),
+                f"sha256:{source.sha256}"]
+    if sources != [expected]:
+        refuse(f"the source lines {sources} are not the one archive {expected}")
+    _, license = manifest.parse_license(package.license, "package.license")
+    layers = [row[1:] for row in rows if row[0] == "layer"]
+    wanted = {
+        "rom": [["rom", f"sha256:{rom.sha256}", "open", license]],
+        "source": [["source", f"sha256:{source.sha256}", "open", license]],
+    }
+    for kind, expected in wanted.items():
+        found = [layer for layer in layers if layer[:1] == [kind]]
+        if found != expected:
+            refuse(f"the {kind} layers {found} are not {expected}")
+    for layer in layers:
+        if layer[:1] not in (["rom"], ["source"]) and layer[2:] != ["open", FIRMWARE_METADATA_LICENSE]:
+            refuse(f"the {' '.join(layer[:1])} layer is {layer[2:]}, not open under {FIRMWARE_METADATA_LICENSE}")
+    if lines[-1] != PUSHABLE:
+        refuse(f"the last line is {lines[-1]!r}, not {PUSHABLE!r}")
 
 
 def dry_run(cli, item, target, store, config, digest, env):
-    args = ["image", "push", item.ref, target, "--store", str(store), "--dry-run", "--config", str(config)]
+    args = ["image", "push", item.store_tag, target, "--store", str(store), "--dry-run", "--config", str(config)]
     done = run_cli(cli, args, env)
     lines = done.stdout.splitlines()
     if done.returncode != 0 or "guard:allowed" not in lines:
@@ -574,10 +711,10 @@ def dry_run(cli, item, target, store, config, digest, env):
         raise Failure(f"push --dry-run {target}: the plan names another target or image")
 
 
-def push_set(cli, item, target, store, config, env):
+def push_artifact(cli, item, target, store, config, env):
     """`upcli image push`, never with --move; what it did and the digest it
     reports."""
-    args = ["image", "push", item.ref, target, "--store", str(store), "--config", str(config)]
+    args = ["image", "push", item.store_tag, target, "--store", str(store), "--config", str(config)]
     done = run_cli(cli, args, env)
     if done.returncode != 0:
         raise Failure(f"push {target}: {why(done)}")
@@ -607,16 +744,17 @@ def remove_tree(path):
 def parse_args(argv, environ):
     parser = argparse.ArgumentParser(
         prog="lib/publish.py",
-        description="Build, import, check and (with --push) publish the media sets.",
+        description="Build, import, check and (with --push) publish the media sets and firmware packages.",
     )
     parser.add_argument("--cli", default=environ.get(CLI_ENV),
                         help=f"the upcli binary (default: ${CLI_ENV})")
     parser.add_argument("--store", help="a new directory to import into, kept afterwards")
     parser.add_argument("--experimental", metavar="RUN",
-                        help="target unemu/experimental/media/<work>:<media-tag>.ci<RUN>")
-    parser.add_argument("--push", action="store_true", help="push the checked sets")
+                        help="target unemu/experimental/media/<work>:<media-tag>.ci<RUN> and "
+                             "unemu/experimental/firmware/<id>:<revision>.ci<RUN>")
+    parser.add_argument("--push", action="store_true", help="push the checked sets and packages")
     parser.add_argument("--allow-unpinned", action="store_true",
-                        help="a dry run passes with sets that have no digest pin yet")
+                        help="a dry run passes with sets or packages that have no digest pin yet")
     parser.add_argument("selectors", nargs="*", metavar="RECIPE|REF")
     options = parser.parse_args(argv)
     if not options.cli:
@@ -624,7 +762,7 @@ def parse_args(argv, environ):
     if options.experimental is not None and not RUN.fullmatch(options.experimental):
         parser.error("--experimental RUN takes the CI run number: 1 to 20 digits, not starting with 0")
     if options.push and options.allow_unpinned:
-        parser.error("--allow-unpinned is for a dry run; a set without a digest pin is never pushed")
+        parser.error("--allow-unpinned is for a dry run; nothing without a digest pin is ever pushed")
     return parser, options
 
 
@@ -653,46 +791,86 @@ def find_cli(parser, cli, environ):
     return os.path.abspath(cli)
 
 
-def select(parser, root, selectors):
-    """Every manifest checked, and the selected sets as Items (without a
-    target yet)."""
+def recipe_manifest(recipes_dir, recipe):
+    """The file name of the recipe's one manifest, or None when it has
+    none; a Failure when it has both kinds."""
+    found = [name for name in MANIFEST_FILES if (recipes_dir / recipe / name).is_file()]
+    if len(found) > 1:
+        raise Failure(f"recipes/{recipe} has both {' and '.join(found)}; a recipe has one manifest")
+    return found[0] if found else None
+
+
+def select(parser, root, selectors, out_root):
+    """Every manifest checked, and the selected sets and packages as Items
+    (without a target yet), their import arguments naming the outputs in
+    OUT_ROOT/<recipe>."""
     recipes_dir = root / "recipes"
-    recipes = sorted(
-        p.name for p in recipes_dir.iterdir() if (p / "media.toml").is_file()
-    ) if recipes_dir.is_dir() else []
+    found = {}
+    if recipes_dir.is_dir():
+        for path in recipes_dir.iterdir():
+            name = recipe_manifest(recipes_dir, path.name)
+            if name is not None:
+                found[path.name] = name
+    recipes = sorted(found)
     if not recipes:
         raise Failure(f"no recipes in {recipes_dir}")
     log("== check manifests")
     checked = {}
     for recipe in recipes:
-        path = recipes_dir / recipe / "media.toml"
+        name = f"recipes/{recipe}/{found[recipe]}"
         try:
-            checked[recipe] = manifest.load(path)
+            checked[recipe] = manifest.load(recipes_dir / recipe / found[recipe])
         except manifest.Refusal as refusal:
-            raise Failure(f"recipes/{recipe}/media.toml: {refusal}") from None
+            raise Failure(f"{name}: {refusal}") from None
+        # The file name says the kind (manifest.load).
+        is_package = isinstance(checked[recipe], manifest.FirmwareManifest)
         for warning in checked[recipe].warnings:
-            log(f"recipes/{recipe}/media.toml: warning: {warning}")
-        log(f"recipes/{recipe}/media.toml: ok, {len(checked[recipe].sets)} sets")
+            log(f"{name}: warning: {warning}")
+        if is_package:
+            log(f"{name}: ok, firmware package")
+        else:
+            log(f"{name}: ok, {len(checked[recipe].sets)} sets")
     try:
-        manifest.refs([(f"recipes/{r}/media.toml", checked[r]) for r in recipes])
+        manifest.refs([(f"recipes/{r}/{found[r]}", checked[r]) for r in recipes])
     except manifest.Refusal as refusal:
         raise Failure(str(refusal)) from None
 
-    every = [(r, s) for r in recipes for s in checked[r].sets]
+    every = [(r, a) for r in recipes for a in manifest.artifacts(checked[r], str(out_root / r))]
     if not selectors:
         chosen = every
     else:
         wanted = set()
         for selector in selectors:
-            matching = [
-                (r, s) for r, s in every
-                if selector == r or selector == f"{checked[r].release.repository}:{s.tag}"
-            ]
+            matching = [(r, a) for r, a in every if selector in (r, a.ref)]
             if not matching:
-                parser.error(f"{selector!r} is neither a recipe nor a set's ref (unemu/media/<work>:<tag>)")
-            wanted.update((r, s.tag) for r, s in matching)
-        chosen = [(r, s) for r, s in every if (r, s.tag) in wanted]
-    return [Item(r, checked[r], s, "", "") for r, s in chosen]
+                parser.error(f"{selector!r} is neither a recipe nor a ref (unemu/media/<work>:<tag> "
+                             "or unemu/firmware/<id>:<revision>)")
+            wanted.update(a.ref for _, a in matching)
+        chosen = [(r, a) for r, a in every if a.ref in wanted]
+    return [Item(r, checked[r], a, "", "") for r, a in chosen]
+
+
+def set_target(item, experimental):
+    """Set the item's target repository and tag: its own, or with
+    EXPERIMENTAL (a run number) unemu/experimental/<kind>/<name>:
+    <tag>.ci<RUN>. A Failure when the experimental repository or tag is
+    longer than a repository name or tag may be: the manifests keep their
+    own within the limits, not the experimental one."""
+    if experimental is None:
+        item.repository, item.tag = item.artifact.repository, item.artifact.tag
+        return
+    repository = item.artifact.repository
+    if not repository.startswith(OFFICIAL_PREFIX):
+        raise Failure(f"{repository} is outside {OFFICIAL_PREFIX}")
+    item.repository = EXPERIMENTAL_PREFIX + repository[len(OFFICIAL_PREFIX):]
+    item.tag = f"{item.artifact.tag}.ci{experimental}"
+    if len(item.repository) > manifest.MAX_REPOSITORY:
+        raise Failure(
+            f"the experimental repository {item.repository} of {item.ref} is "
+            f"{len(item.repository)} bytes, longer than {manifest.MAX_REPOSITORY}"
+        )
+    if not manifest.TAG.fullmatch(item.tag):
+        raise Failure(f"the target tag {item.tag!r} is longer than 128 characters")
 
 
 def summary(items, host, mode):
@@ -703,7 +881,7 @@ def summary(items, host, mode):
             item.tag,
             item.digest or "-",
             item.outcome,
-            item.checked.release.license,
+            item.artifact.license,
         ))
     widths = [max(len(row[i]) for row in rows) for i in range(4)]
     print(f"registry {host} ({mode})")
@@ -734,23 +912,14 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
 
     try:
         pin = read_pin(root)
-        items = select(parser, root, options.selectors)
+        items = select(parser, root, options.selectors, root / "out")
+        for item in items:
+            set_target(item, options.experimental)
     except Failure as failure:
         log(f"refused: {failure}")
         return 1
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 2
-
-    for item in items:
-        if options.experimental is None:
-            item.repository = item.checked.release.repository
-            item.tag = item.media_set.tag
-        else:
-            item.repository = f"{EXPERIMENTAL_NAMESPACE}/{item.checked.release.work}"
-            item.tag = f"{item.media_set.tag}.ci{options.experimental}"
-            if not manifest.TAG.fullmatch(item.tag):
-                log(f"refused: the target tag {item.tag!r} is longer than 128 characters")
-                return 1
 
     (root / "build").mkdir(exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix="publish.", dir=root / "build"))
@@ -788,7 +957,7 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
         log(f"refused: {failure}")
         return 1
     if commit is None:
-        log("upcli --version reports no commit; the set digest pins are the check")
+        log("upcli --version reports no commit; the digest pins are the check")
     elif commit != pin:
         log(f"refused: upcli --version reports commit {commit}, {PIN_FILE} holds {pin}")
         return 1
@@ -808,15 +977,15 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
                 item.fail("failed", describe(error))
             continue
         for item in group:
-            target = f"{host}/{item.repository}:{item.tag}"
+            reference = f"{host}/{item.repository}:{item.tag}"
             log(f"== import {item.ref}")
             try:
-                item.digest = import_set(cli, item, out_dir, store, env)
-                dry_run(cli, item, target, store, config, item.digest, env)
+                item.digest = import_artifact(cli, item, out_dir, store, env)
+                dry_run(cli, item, reference, store, config, item.digest, env)
             except Exception as error:  # noqa: BLE001 - every failure reaches the summary
                 item.fail("failed", describe(error))
                 continue
-            pinned = item.media_set.digest
+            pinned = item.artifact.digest
             if pinned is None:
                 item.outcome = "unpinned"
                 item.detail = "no digest pin in the manifest; never pushed"
@@ -824,7 +993,7 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
                 item.fail("mismatch", f"upcli gives {item.digest}, the manifest pins {pinned}")
             else:
                 item.outcome = "dry run"
-            log(f"{item.ref}: {item.digest} -> {target}: {item.outcome}")
+            log(f"{item.ref}: {item.digest} -> {reference}: {item.outcome}")
 
     status = 1 if any(item.failed for item in items) else 0
     if not options.allow_unpinned and any(item.outcome == "unpinned" for item in items):
@@ -836,13 +1005,13 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
 
 
 def push_all(cli, host, items, store, config, env, registry, environ):
-    """Push every set, after an anonymous read of its target, when every
-    set passed and is pinned; stop at the first refusal or failure. 1
-    unless every set ends on the registry."""
+    """Push every set and package, after an anonymous read of its target,
+    when every one passed and is pinned; stop at the first refusal or
+    failure. 1 unless every one ends on the registry."""
     if any(item.failed or item.outcome == "unpinned" for item in items):
         for item in items:
             if item.outcome == "dry run":
-                item.outcome, item.detail = "held", "not pushed: another set failed or has no digest pin"
+                item.outcome, item.detail = "held", "not pushed: another one failed or has no digest pin"
         return 1
     secrets = dict(env)
     secrets[USER_ENV] = environ[USER_ENV]
@@ -862,8 +1031,8 @@ def push_all(cli, host, items, store, config, env, registry, environ):
 
 
 def push_one(cli, host, item, target, store, config, secrets, registry):
-    """One set: the anonymous read, the push and the read-back. Whatever
-    goes wrong marks the set; once upcli has pushed, a failed or other
+    """One set or package: the anonymous read, the push and the read-back.
+    Whatever goes wrong marks it; once upcli has pushed, a failed or other
     read-back marks it pushed but unconfirmed."""
     try:
         current = registry(host, item.repository, item.tag)
@@ -871,14 +1040,16 @@ def push_one(cli, host, item, target, store, config, secrets, registry):
             item.outcome = "present"
             return
         if current is not None:
-            item.fail("refused", f"the registry already holds {current} under this tag; a media tag never moves")
+            item.fail("refused", f"the registry already holds {current} under this tag; "
+                                 f"a {'package revision' if item.artifact.kind == 'firmware' else 'media tag'} "
+                                 "never moves")
             return
-        word, digest = push_set(cli, item, target, store, config, secrets)
+        word, digest = push_artifact(cli, item, target, store, config, secrets)
     except Exception as error:  # noqa: BLE001 - every failure reaches the summary
         item.fail("failed", describe(error))
         return
     if digest != item.digest:
-        item.fail("failed", f"upcli pushed {digest}, the set is {item.digest}")
+        item.fail("failed", f"upcli pushed {digest}, the {item.artifact.kind} digest is {item.digest}")
         return
     try:
         served = registry(host, item.repository, item.tag)

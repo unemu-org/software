@@ -1,5 +1,6 @@
-# The unemupc commit whose CLI, upcli, imports and pushes the sets
-# (lib/publish.py; see README.md). Build it there with
-# `cargo build -p cli --bin upcli`. The manifests' set digest pins are what
-# this CLI gives; moving the pin is checked by those pins.
+# The unemupc commit whose CLI, upcli, imports and pushes the media sets and
+# the firmware packages (lib/publish.py; see README.md). Build it there with
+# `cargo build -p cli --bin upcli`. The digest pins in the manifests, of
+# every set (media.toml) and every package (firmware.toml), are what this CLI
+# gives; moving the pin is checked by those pins.
 3634f02f4006c2ce77239091af5937cbbf616da9

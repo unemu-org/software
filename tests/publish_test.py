@@ -44,7 +44,9 @@ USER_ENV, PASSWORD_ENV, HOST_ENV = publish.USER_ENV, publish.PASSWORD_ENV, publi
 # registries file it was given) to a log, answers as upcli does on the lines
 # the pipeline reads (or as the test's configuration says, to check that the
 # pipeline notices), and on a push records the target in a JSON file the
-# fake registry reads.
+# fake registry reads. A firmware import records the statement it was given
+# in another JSON file, from which `image firmware show` answers as upcli at
+# the pinned commit prints a package (crates/cli/src/image/firmware.rs).
 FAKE_CLI = r'''#!@PYTHON@ -I
 import hashlib, json, os, sys
 
@@ -86,6 +88,80 @@ if argv[:3] == ["image", "media", "show"]:
     print(config.get("push_line", "push\tany configured registry, including unemu/"))
     for line in config.get("show_after", []):
         print(line)
+    sys.exit(0)
+
+
+def value(flag):
+    return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def sha256_of(path):
+    with open(path, "rb") as handle:
+        data = handle.read()
+    return hashlib.sha256(data).hexdigest(), len(data)
+
+
+def debug(text):
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+if argv[:3] == ["image", "firmware", "import"]:
+    tag = "firmware/" + value("--for") + ":1"
+    if tag in config.get("fail_import", []):
+        print("selected catalogue entry has no complete unambiguous package", file=sys.stderr)
+        sys.exit(1)
+    packages = {}
+    if os.path.exists(@FIRMWARE@):
+        with open(@FIRMWARE@) as handle:
+            packages = json.load(handle)
+    packages[tag] = {
+        "rom": argv[3], "source": value("--source"), "title": value("--title"),
+        "description": value("--description"), "vendor": value("--vendor"), "version": value("--version"),
+        "labels": [argv[i + 1] for i, a in enumerate(argv) if a == "--label"],
+        "license": value("--license") if "--open" in argv else None,
+    }
+    with open(@FIRMWARE@, "w") as handle:
+        json.dump(packages, handle)
+    if "firmware_import" in config:
+        for line in config["firmware_import"]:
+            print(line)
+        sys.exit(0)
+    print("complete\t" + tag + "\t" + sha256_of(argv[3])[0])
+    print("imported\t" + tag + "\t" + digest_of(tag))
+    sys.exit(0)
+if argv[:3] == ["image", "firmware", "show"]:
+    tag = argv[3]
+    with open(@FIRMWARE@) as handle:
+        package = json.load(handle)[tag]
+    rom, rom_size = sha256_of(package["rom"])
+    source, source_size = sha256_of(package["source"])
+    open_license ="open\t" + package["license"] if package["license"] else "user-supplied\t-"
+    lines = {
+        "first": tag + "\t" + digest_of(tag) + "\t" + debug(package["title"]),
+        "fits": 'fits\t{"boards": Array([String("ibm-5170")]), "machine_classes": Array([String("at")])}',
+        "rom": "system-bios\tsystem-bios\t" + str(rom_size) + "\t" + rom,
+        "requires": 'requires\tsystem-bios\t["kbc-8042"]',
+        "vendor": "vendor\t" + debug(package["vendor"]),
+        "version": "version\t" + debug(package["version"]),
+        "description": "description\t" + debug(package["description"]),
+        "labels": "labels\t[" + ", ".join(debug(label) for label in sorted(package["labels"])) + "]",
+        "provenance": 'provenance\tunstated\t"synthetic"\trevision:-\turl:-\tdate:-',
+        "source": "source\t" + debug(os.path.basename(package["source"])) + "\ttar\t" + str(source_size)
+                  + "\tsha256:" + source + '\t["system-bios"]',
+        "readme": "readme\tsha256:" + "e" * 64 + "\t1000",
+        "layer config": "layer\tconfig\tsha256:" + "f" * 64 + "\topen\tCC0-1.0",
+        "layer rom": "layer\trom\tsha256:" + rom + "\t" + open_license,
+        "layer source": "layer\tsource\tsha256:" + source + "\t" + open_license,
+        "layer readme": "layer\treadme\tsha256:" + "e" * 64 + "\topen\tCC0-1.0",
+    }
+    for key, line in config.get("firmware_show", {}).items():
+        if line is None:
+            del lines[key]
+        else:
+            lines[key] = line
+    for line in lines.values():
+        print(line)
+    print(config.get("push_line", "push\tany configured registry, including unemu/"))
     sys.exit(0)
 if argv[:2] == ["image", "push"]:
     ref, target = argv[2], argv[3]
@@ -181,6 +257,33 @@ OUTPUTS = {
     "720k/b.img": b"disk b",
 }
 
+# A package manifest; the description holds a double quote and a backslash,
+# which upcli's show escapes, and the labels are not sorted, as the show
+# lists them.
+FIRMWARE_MANIFEST = r"""[package]
+catalogue_id = "@ID@"
+revision = @REVISION@
+@DIGEST@title = "Demo BIOS"
+description = "A synthetic \"demo\" BIOS with a back\\slash."
+vendor = "Test Vendor"
+version = "1.0"
+labels = ["system-bios", "open-source"]
+license = "GPL-2.0-or-later"
+
+[rom]
+path = "demo.bin"
+sha256 = "@ROM@"
+
+[source]
+path = "demo-src.tar"
+sha256 = "@SOURCE@"
+"""
+
+FIRMWARE_OUTPUTS = {
+    "demo.bin": b"\x55\xaa" + b"\x00" * 62,
+    "demo-src.tar": b"firmware source archive bytes",
+}
+
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
@@ -225,13 +328,15 @@ class Repository:
         self.log = self.base / "cli-log.jsonl"
         self.config = self.base / "cli-config.json"
         self.pushed = self.base / "pushed.json"
+        self.packages = self.base / "packages.json"
         self.bin = self.base / "bin"
         self.bin.mkdir()
         self.cli = self.bin / "upcli"
         self.configure()
         text = FAKE_CLI
         for name, value in (("@PYTHON@", sys.executable), ("@CONFIG@", repr(str(self.config))),
-                            ("@LOG@", repr(str(self.log))), ("@REGISTRY@", repr(str(self.pushed)))):
+                            ("@LOG@", repr(str(self.log))), ("@REGISTRY@", repr(str(self.pushed))),
+                            ("@FIRMWARE@", repr(str(self.packages)))):
             text = text.replace(name, value)
         self.cli.write_text(text, encoding="utf-8")
         self.cli.chmod(stat.S_IRWXU)
@@ -259,6 +364,25 @@ class Repository:
         out = self.root / "out" / name
         for path, data in OUTPUTS.items():
             (out / path).parent.mkdir(parents=True, exist_ok=True)
+            (out / path).write_bytes(data)
+        return recipe_dir
+
+    def firmware_recipe(self, name, catalogue_id="demo-bios", revision=1, pin="match"):
+        """A recipe for the package unemu/firmware/CATALOGUE_ID:REVISION;
+        PIN is 'match' (what the fake CLI gives), None or a digest."""
+        recipe_dir = self.root / "recipes" / name
+        recipe_dir.mkdir(parents=True)
+        (recipe_dir / "build.sh").write_text(BUILD_SH, encoding="utf-8")
+        if pin == "match":
+            pin = fake_digest(f"firmware/{catalogue_id}:1")
+        text = (FIRMWARE_MANIFEST.replace("@ID@", catalogue_id).replace("@REVISION@", str(revision))
+                .replace("@DIGEST@", f'digest = "{pin}"\n' if pin else "")
+                .replace("@ROM@", sha256(FIRMWARE_OUTPUTS["demo.bin"]))
+                .replace("@SOURCE@", sha256(FIRMWARE_OUTPUTS["demo-src.tar"])))
+        (recipe_dir / "firmware.toml").write_text(text, encoding="utf-8")
+        out = self.root / "out" / name
+        out.mkdir(parents=True)
+        for path, data in FIRMWARE_OUTPUTS.items():
             (out / path).write_bytes(data)
         return recipe_dir
 
@@ -415,7 +539,8 @@ class Arguments(Case):
             self.repo.log.unlink(missing_ok=True)
             code, _, stderr = self.repo.run(selector)
             self.assertEqual(code, 2, selector)
-            self.assertIn("neither a recipe nor a set's ref", stderr)
+            self.assertIn("neither a recipe nor a ref (unemu/media/<work>:<tag> or "
+                          "unemu/firmware/<id>:<revision>)", stderr)
             self.assertEqual(self.repo.calls(), [])
 
     def test_usage_errors(self):
@@ -786,6 +911,49 @@ class Experimental(Case):
             ["unemu/media/demo:2.0-720k", f"{HOST}/unemu/experimental/media/demo:2.0-720k.ci42"],
         ])
 
+    def test_experimental_firmware_ref_and_tag(self):
+        self.repo.firmware_recipe("bios")
+        code, stdout, stderr = self.repo.run("--experimental", "42", "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.outcome(stdout, "1.ci42", "unemu/experimental/firmware/demo-bios"), "pushed")
+        self.assertEqual(self.repo.registry.calls[0], (HOST, "unemu/experimental/firmware/demo-bios", "1.ci42"))
+        # The package is imported under its store tag; only the target changes.
+        self.assertEqual([p["argv"][2:4] for p in self.repo.pushes()], [
+            ["firmware/demo-bios:1", f"{HOST}/unemu/experimental/firmware/demo-bios:1.ci42"],
+        ])
+
+    def test_the_experimental_repository_fits_a_repository_name(self):
+        # The manifests keep unemu/firmware/<id> and unemu/media/<work> within
+        # 255 bytes; the experimental repository adds experimental/. Each
+        # kind at the limit (255 bytes) and one byte past it.
+        prefix = {"firmware": "unemu/experimental/firmware/", "media": "unemu/experimental/media/"}
+        for kind, length, accepted in (("firmware", 227, True), ("firmware", 228, False),
+                                       ("media", 230, True), ("media", 231, False)):
+            name = "a" * length
+            repository = prefix[kind] + name
+            self.assertEqual(len(repository), 255 if accepted else 256)
+            with self.subTest(kind=kind, length=length), tempfile.TemporaryDirectory() as directory:
+                repo = Repository(directory)
+                if kind == "firmware":
+                    repo.firmware_recipe("bios", catalogue_id=name)
+                    ref = f"unemu/firmware/{name}:1"
+                else:
+                    repo.recipe("demo", work=name)
+                    ref = f"unemu/media/{name}:2.0"
+                code, stdout, stderr = repo.run("--experimental", "5")
+                if accepted:
+                    self.assertEqual(code, 0, stderr)
+                    self.assertIn(repository, stdout)
+                    continue
+                self.assertEqual(code, 1)
+                self.assertIn(f"refused: the experimental repository {repository} of {ref} is 256 bytes, "
+                              "longer than 255", stderr)
+                # Refused before any build or upcli call.
+                self.assertEqual(repo.calls(), [])
+                self.assertFalse(any((repo.root / "recipes").glob("*/build-env.txt")))
+                # Its own repository is within the limit.
+                self.assertEqual(repo.run()[0], 0)
+
     def test_the_experimental_tag_fits_a_tag(self):
         # A 117-character version: :<v>-720k is 122 characters, so .ci123
         # makes 128 and .ci1234 one too many.
@@ -798,6 +966,269 @@ class Experimental(Case):
         self.assertEqual(code, 1)
         self.assertIn(f"the target tag '{version}-720k.ci1234' is longer than 128 characters", stderr)
         self.assertEqual(self.repo.calls(), [])
+
+
+class Firmware(Case):
+    """A firmware package goes the media sets' way, with its own import
+    and show checks."""
+
+    REPOSITORY = "unemu/firmware/demo-bios"
+    STORE_TAG = "firmware/demo-bios:1"
+
+    def firmware_outcome(self, stdout, tag="1"):
+        return self.row(stdout, self.REPOSITORY, tag)[3]
+
+    def imports(self, kind="firmware"):
+        return [c["argv"] for c in self.repo.calls() if c["argv"][:3] == ["image", kind, "import"]]
+
+    def test_calls_follow_the_manifest(self):
+        self.repo.firmware_recipe("bios")
+        code, stdout, stderr = self.repo.run()
+        self.assertEqual(code, 0, stderr)
+        imports = self.imports()
+        self.assertEqual(len(imports), 1)
+        store = imports[0][imports[0].index("--store") + 1]
+        self.assertTrue(store.startswith(str(self.repo.root / "build" / "publish.")), store)
+        checked = manifest.load(self.repo.root / "recipes" / "bios" / "firmware.toml")
+        out_dir = str(self.repo.root / "out" / "bios")
+        self.assertEqual(imports[0], manifest.firmware_import_arguments(checked, out_dir) + ["--store", store, "--create"])
+        self.assertIn("--open", imports[0])
+        shows = [c["argv"] for c in self.repo.calls() if c["argv"][:3] == ["image", "firmware", "show"]]
+        self.assertEqual(shows, [["image", "firmware", "show", self.STORE_TAG, "--store", store]])
+        dry = [c["argv"] for c in self.repo.calls() if "--dry-run" in c["argv"]]
+        self.assertEqual(dry[0][:7], ["image", "push", self.STORE_TAG, f"{HOST}/{self.REPOSITORY}:1",
+                                      "--store", store, "--dry-run"])
+        row = self.row(stdout, self.REPOSITORY, "1")
+        self.assertEqual(row[2:], [fake_digest(self.STORE_TAG), "dry", "run", "GPL-2.0-or-later"])
+        self.assertIn("recipes/bios/firmware.toml: ok, firmware package", stderr)
+        self.assertEqual(self.repo.registry.calls, [])
+        self.assertEqual(self.repo.pushes(), [])
+        self.assertEqual(list((self.repo.root / "build").iterdir()), [])
+
+    def test_sets_and_packages_together_and_selection(self):
+        self.repo.recipe("demo")
+        self.repo.firmware_recipe("bios")
+        code, stdout, stderr = self.repo.run()
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.firmware_outcome(stdout), "dry")
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "dry")
+        # In recipe order, one store.
+        imports = [c["argv"] for c in self.repo.calls() if c["argv"][1:3] in (["media", "import"],
+                                                                              ["firmware", "import"])]
+        self.assertEqual([a[1] for a in imports], ["firmware", "media", "media"])
+        self.assertEqual(len({a[a.index("--store") + 1] for a in imports}), 1)
+
+        for selector, packages, sets in (("bios", 1, 0), (f"{self.REPOSITORY}:1", 1, 0),
+                                         ("unemu/media/demo:2.0", 0, 1), ("demo", 0, 2)):
+            self.repo.log.unlink(missing_ok=True)
+            code, _, stderr = self.repo.run(selector)
+            self.assertEqual(code, 0, stderr)
+            self.assertEqual((len(self.imports()), len(self.imports("media"))), (packages, sets), selector)
+        for selector in (f"{self.REPOSITORY}:2", self.STORE_TAG, "unemu/firmware/demo-bios"):
+            self.repo.log.unlink(missing_ok=True)
+            code, _, stderr = self.repo.run(selector)
+            self.assertEqual(code, 2, selector)
+            self.assertIn("neither a recipe nor a ref", stderr)
+            self.assertEqual(self.repo.calls(), [])
+
+    def test_the_show_must_state_the_manifest(self):
+        self.repo.firmware_recipe("bios")
+        tag, digest = self.STORE_TAG, fake_digest(self.STORE_TAG)
+        rom, source = sha256(FIRMWARE_OUTPUTS["demo.bin"]), sha256(FIRMWARE_OUTPUTS["demo-src.tar"])
+        size = len(FIRMWARE_OUTPUTS["demo-src.tar"])
+        other = "c" * 64
+        for change, fragment in (
+            ({"first": f'{tag}\t{digest}\t"Other BIOS"'}, "the first line"),
+            ({"first": f'firmware/other:1\t{digest}\t"Demo BIOS"'}, "the first line"),
+            ({"first": f'{tag}\tsha256:{other}\t"Demo BIOS"'}, "the first line"),
+            ({"first": f"{tag}\t{digest}\tDemo BIOS"}, "the first line"),
+            ({"rom": f"system-bios\tsystem-bios\t64\t{other}"}, "the ROM lines"),
+            ({"rom": f"system-bios\tsystem-bios\t65\t{rom}"}, "the ROM lines"),
+            ({"rom": None}, "the ROM lines"),
+            ({"second rom": f"option-rom\toption-rom\t64\t{other}"}, "the ROM lines"),
+            ({"vendor": 'vendor\t"Other Vendor"'}, "vendor is"),
+            ({"vendor": None}, "vendor is"),
+            ({"second vendor": 'vendor\t"Test Vendor"'}, "vendor is"),
+            ({"version": 'version\t"2.0"'}, "version is"),
+            # The backslash unescaped.
+            ({"description": 'description\t"A synthetic \\"demo\\" BIOS with a back\\slash."'}, "description is"),
+            # Not sorted, as upcli stores and shows them.
+            ({"labels": 'labels\t["system-bios", "open-source"]'}, "labels is"),
+            ({"source": f'source\t"other-src.tar"\ttar\t{size}\tsha256:{source}\t[]'}, "the source lines"),
+            ({"source": f'source\t"demo-src.tar"\tzip\t{size}\tsha256:{source}\t[]'}, "the source lines"),
+            ({"source": f'source\t"demo-src.tar"\ttar\t{size}\tsha256:{other}\t[]'}, "the source lines"),
+            ({"source": None}, "the source lines"),
+            ({"layer rom": f"layer\trom\tsha256:{rom}\topen\tGPL-3.0-or-later"}, "the rom layers"),
+            ({"layer rom": f"layer\trom\tsha256:{rom}\tuser-supplied\t-"}, "the rom layers"),
+            ({"layer rom": None}, "the rom layers"),
+            ({"layer source": f"layer\tsource\tsha256:{source}\tuser-supplied\t-"}, "the source layers"),
+            ({"layer readme": f"layer\treadme\tsha256:{'e' * 64}\tuser-supplied\t-"}, "the readme layer is"),
+            ({"layer config": f"layer\tconfig\tsha256:{'f' * 64}\topen\tMIT"}, "the config layer is"),
+            ({"layer extra": f"layer\textra\tsha256:{other}\topen\tMIT"}, "the extra layer is"),
+        ):
+            self.repo.configure(firmware_show=change)
+            code, stdout, _ = self.repo.run()
+            self.assertEqual(code, 1, change)
+            self.assertEqual(self.firmware_outcome(stdout), "failed", change)
+            self.assertIn(f"firmware show: {fragment}", stdout, change)
+        self.repo.configure(push_line="push\tprivate registries outside unemu/ only: copyleft ROM without its "
+                                      "source archive")
+        code, stdout, _ = self.repo.run()
+        self.assertEqual(code, 1)
+        self.assertIn("firmware show: the last line is", stdout)
+        self.repo.configure()
+        self.assertEqual(self.repo.run()[0], 0)
+
+    def test_the_import_output_is_strict(self):
+        tag, digest = self.STORE_TAG, fake_digest(self.STORE_TAG)
+        rom = sha256(FIRMWARE_OUTPUTS["demo.bin"])
+        self.repo.firmware_recipe("bios")
+        for lines, fragment in (
+            ([f"complete\t{tag}\t{rom}", f"note\t{tag}\tkept user-supplied: synthetic",
+              f"imported\t{tag}\t{digest}"], "import: unexpected output"),
+            ([f"already imported\t{tag}"], "import: unexpected output"),
+            ([f"complete\t{tag}\t{'0' * 64}", f"imported\t{tag}\t{digest}"], "import: unexpected output"),
+            (["unmatched: 1 files (1 size mismatches, 0 SHA-256 mismatches)", f"complete\t{tag}\t{rom}",
+              f"imported\t{tag}\t{digest}"], "import: unexpected output"),
+            ([f"complete\t{tag}\t{rom}"], "import: unexpected output"),
+            ([f"complete\t{tag}\t{rom}", f"imported\tfirmware/other:1\t{digest}"], "import: unexpected last line"),
+            ([f"complete\t{tag}\t{rom}", f"imported\t{tag}\tsha256:{'C' * 64}"], "import: unexpected last line"),
+            ([f"complete\t{tag}\t{rom}", f"imported\t{tag}\t{digest}\textra"], "import: unexpected last line"),
+        ):
+            self.repo.configure(firmware_import=lines)
+            code, stdout, _ = self.repo.run()
+            self.assertEqual(code, 1, lines)
+            self.assertEqual(self.firmware_outcome(stdout), "failed", lines)
+            self.assertIn(fragment, stdout, lines)
+        self.repo.configure(fail_import=[tag])
+        self.repo.log.unlink()
+        code, stdout, _ = self.repo.run()
+        self.assertEqual(code, 1)
+        self.assertIn("import: selected catalogue entry has no complete unambiguous package", stdout)
+        # A failed import is taken no further.
+        self.assertEqual([c["argv"][:3] for c in self.repo.calls()],
+                         [["--version"], ["image", "firmware", "import"]])
+
+    def test_digest_pins(self):
+        self.repo.firmware_recipe("bios", pin=None)
+        self.repo.firmware_recipe("other", catalogue_id="other-bios", pin="sha256:" + "e" * 64)
+        code, stdout, _ = self.repo.run()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.firmware_outcome(stdout), "unpinned")
+        self.assertEqual(self.row(stdout, "unemu/firmware/other-bios", "1")[3], "mismatch")
+        self.assertIn(f"upcli gives {fake_digest('firmware/other-bios:1')}, the manifest pins sha256:{'e' * 64}",
+                      stdout)
+        code, stdout, _ = self.repo.run("--allow-unpinned", "bios")
+        self.assertEqual(code, 0)
+        code, stdout, _ = self.repo.run("--push", "bios")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.firmware_outcome(stdout), "unpinned")
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_push(self):
+        self.repo.firmware_recipe("bios")
+        code, stdout, stderr = self.repo.run("--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.firmware_outcome(stdout), "pushed")
+        pushes = self.repo.pushes()
+        self.assertEqual([p["argv"] for p in pushes], [[
+            "image", "push", self.STORE_TAG, f"{HOST}/{self.REPOSITORY}:1",
+            "--store", pushes[0]["argv"][5], "--config", pushes[0]["argv"][7],
+        ]])
+        self.assertEqual((pushes[0]["env"][USER_ENV], pushes[0]["env"][PASSWORD_ENV]), (USER, SECRET))
+        for call in self.repo.calls():
+            self.assertNotIn("--move", call["argv"])
+            if call not in pushes:
+                self.assertFalse({USER_ENV, PASSWORD_ENV, HOST_ENV} & set(call["env"]), call["argv"])
+        self.assertEqual(self.repo.registry.calls, [(HOST, self.REPOSITORY, "1"), (HOST, self.REPOSITORY, "1")])
+        # Never the latest alias.
+        self.assertFalse(any("latest" in str(c["argv"]) for c in self.repo.calls()))
+
+    def test_a_revision_never_moves(self):
+        self.repo.firmware_recipe("bios")
+        target = f"{HOST}/{self.REPOSITORY}:1"
+        self.repo.registry.held[target] = fake_digest(self.STORE_TAG)
+        code, stdout, stderr = self.repo.run("--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.firmware_outcome(stdout), "present")
+        self.assertEqual(self.repo.pushes(), [])
+        self.repo.registry.held[target] = "sha256:" + "d" * 64
+        code, stdout, _ = self.repo.run("--push")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.firmware_outcome(stdout), "refused")
+        self.assertIn(f"already holds sha256:{'d' * 64} under this tag; a package revision never moves", stdout)
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_manifests_are_checked_first(self):
+        # One manifest per recipe, of the kind its name says.
+        recipe_dir = self.repo.recipe("demo")
+        (recipe_dir / "firmware.toml").write_text(
+            (self.repo.firmware_recipe("bios") / "firmware.toml").read_text(encoding="utf-8"), encoding="utf-8")
+        code, _, stderr = self.repo.run("bios")
+        self.assertEqual(code, 1)
+        self.assertIn("recipes/demo has both media.toml and firmware.toml", stderr)
+        (recipe_dir / "firmware.toml").unlink()
+        # A set manifest saved as firmware.toml, and a package manifest as
+        # media.toml.
+        (recipe_dir / "media.toml").rename(recipe_dir / "firmware.toml")
+        code, _, stderr = self.repo.run("bios")
+        self.assertEqual(code, 1)
+        self.assertIn("recipes/demo/firmware.toml: firmware.toml holds a set manifest", stderr)
+        (recipe_dir / "firmware.toml").unlink()
+        package_dir = self.repo.root / "recipes" / "bios"
+        (package_dir / "firmware.toml").rename(package_dir / "media.toml")
+        code, _, stderr = self.repo.run("demo")
+        self.assertEqual(code, 1)
+        self.assertIn("recipes/bios/media.toml: media.toml holds a package manifest", stderr)
+        (package_dir / "media.toml").rename(package_dir / "firmware.toml")
+        # Two revisions of one catalogue id.
+        self.repo.firmware_recipe("bios-r2", revision=2)
+        code, _, stderr = self.repo.run("bios")
+        self.assertEqual(code, 1)
+        self.assertIn("keep one manifest per catalogue id", stderr)
+        self.assertEqual(self.repo.calls(), [])
+
+    def test_a_failure_of_either_kind_holds_every_push(self):
+        # Each scenario in a fresh repository: a passing, pinned set or
+        # package next to one of the other kind that is unpinned or fails.
+        tag = self.STORE_TAG
+        scenarios = (
+            ("a pinned set, an unpinned package", {}, {"pin": None}, {}, "media", "unpinned"),
+            ("a pinned set, a failing package", {}, {},
+             {"firmware_show": {"vendor": 'vendor\t"Other Vendor"'}}, "media", "failed"),
+            ("a pinned package, an unpinned set", {"pins": (None, None)}, {}, {}, "firmware", "unpinned"),
+            ("a pinned package, a set with another digest", {"pins": ("sha256:" + "e" * 64, "match")}, {}, {},
+             "firmware", "mismatch"),
+            ("a pinned package, a failing set", {}, {}, {"fail_import": ["unemu/media/demo:2.0"]},
+             "firmware", "failed"),
+        )
+        for name, sets, package, settings, passing, outcome in scenarios:
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                repo = Repository(directory)
+                repo.recipe("demo", **sets)
+                repo.firmware_recipe("bios", **package)
+                repo.configure(**settings)
+                code, stdout, _ = repo.run("--push")
+                self.assertEqual(code, 1)
+                media = self.row(stdout, "unemu/media/demo", "2.0")[3]
+                firmware = self.row(stdout, self.REPOSITORY, "1")[3]
+                if passing == "media":
+                    self.assertEqual(firmware, outcome)
+                    self.assertEqual(media, "held")
+                    self.assertEqual(self.row(stdout, "unemu/media/demo", "2.0-720k")[3], "held")
+                else:
+                    self.assertEqual(firmware, "held")
+                    self.assertEqual(media, outcome)
+                self.assertIn("not pushed: another one failed or has no digest pin", stdout)
+                # Nothing reached the registry, and nothing was read from it.
+                self.assertEqual(repo.pushes(), [])
+                self.assertEqual(repo.registry.calls, [])
+                self.assertIn(tag, json.dumps(repo.calls()))
+
+    def test_rust_debug(self):
+        self.assertEqual(publish.rust_debug("plain text's"), '"plain text\'s"')
+        self.assertEqual(publish.rust_debug('a "b" c\\d'), '"a \\"b\\" c\\\\d"')
+        self.assertEqual(publish.rust_debug("t\tn\nr\r\x01\x7f"), '"t\\tn\\nr\\r\\u{1}\\u{7f}"')
 
 
 # --- the anonymous read, against a plain-HTTP registry on 127.0.0.1 -----------

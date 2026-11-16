@@ -5,9 +5,10 @@
 # temporary directory: a few small files and two zip archives with fixed DOS
 # timestamps (python3 zipfile), and a local git repository with fixed dates.
 # They are read through file:// URLs and local paths only, so nothing touches
-# the network. The outputs are pinned in tests/fixtures/example.toml, an
-# example manifest that is no real release: a mismatch there means the
+# the network. The outputs are pinned in tests/fixtures/example/media.toml,
+# an example manifest that is no real release: a mismatch there means the
 # helpers, the environment they clear or the toolchain changed the bytes.
+# The release-asset helper reads a package manifest the test writes itself.
 #
 # The caller is made hostile before the library is sourced, so the pins and
 # checks also show that sourcing and the helpers keep it out:
@@ -31,7 +32,7 @@ set -euo pipefail
 
 TESTS="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 LIB="$TESTS/../lib/recipe.sh"
-EXAMPLE="$TESTS/fixtures/example.toml"
+EXAMPLE="$TESTS/fixtures/example/media.toml"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/recipe-selftest.XXXXXX")"
 TMP="$(CDPATH='' cd -- "$TMP" && pwd -P)"
 trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf -- "$TMP"' EXIT
@@ -230,6 +231,99 @@ ok "fetch tries the next mirror after a wrong hash and after a failure"
 
 refuses "fetch with an invalid pin" "invalid SHA-256 pin" \
 	fetch "$TMP/cache-x/example.zip" "ABC" 1048576 "$ZIP_URL"
+
+# --- release assets ---------------------------------------------------------------
+# A release of two assets, served through file:// URLs, and a package
+# manifest pinning both; a second release holds another ROM under the same
+# name.
+mode_of() {
+	python3 -I -c 'import os, sys; print(format(os.stat(sys.argv[1]).st_mode & 0o7777, "o"))' "$1"
+}
+RELEASE="$FIX/release"
+mkdir -p "$RELEASE" "$FIX/release-other" "$TMP/assets"
+printf 'Example ROM image of the recipe self-test.\n' > "$RELEASE/example.bin"
+printf 'Example source archive of the recipe self-test.\n' > "$RELEASE/example-src.tar"
+printf 'Another ROM image of the recipe self-test.\n' > "$FIX/release-other/example.bin"
+cp "$RELEASE/example-src.tar" "$FIX/release-other/example-src.tar"
+ROM_BYTES="$(file_size "$RELEASE/example.bin")"
+SRC_BYTES="$(file_size "$RELEASE/example-src.tar")"
+ASSET_MANIFEST="$TMP/assets/firmware.toml"
+printf '%s\n' '[package]' 'catalogue_id = "example-bios"' 'revision = 1' 'title = "Example BIOS"' \
+	'description = "A recipe self-test fixture."' 'vendor = "Example Vendor"' 'version = "1.0"' \
+	'labels = ["open-source"]' 'license = "GPL-2.0-or-later"' '' \
+	'[rom]' 'path = "example.bin"' "sha256 = \"$(sha256_of "$RELEASE/example.bin")\"" '' \
+	'[source]' 'path = "example-src.tar"' "sha256 = \"$(sha256_of "$RELEASE/example-src.tar")\"" \
+	> "$ASSET_MANIFEST"
+ASSETS="example.bin $ROM_BYTES
+example-src.tar $SRC_BYTES"
+
+fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache" "$WORK/assets" "file://$RELEASE" "$ASSETS"
+listing="$(cd "$WORK/assets" && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')"
+if [ "$listing" != "./example-src.tar ./example.bin " ]; then
+	fail "fetch_release_assets: the stage holds '$listing'"
+fi
+for name in example.bin example-src.tar; do
+	if ! cmp -s "$WORK/assets/$name" "$RELEASE/$name" || ! cmp -s "$TMP/asset-cache/$name" "$RELEASE/$name"; then
+		fail "fetch_release_assets: $name was not cached and staged unmodified"
+	fi
+	[ "$(mode_of "$WORK/assets/$name")" = 644 ] || fail "fetch_release_assets: the staged $name is not mode 0644"
+done
+ok "fetch_release_assets caches and stages every pinned asset unmodified, with mode 0644"
+
+# A second run stages from the cache, checked again, without downloading,
+# and with mode 0644 whatever the cached copy's mode.
+chmod 0600 "$TMP/asset-cache/example.bin"
+cached_assets() {
+	# shellcheck disable=SC2329 # shadows curl: a download fails the check
+	curl() {
+		echo "curl was called" >&2
+		exit 99
+	}
+	fetch_release_assets "$@"
+}
+(cached_assets "$ASSET_MANIFEST" "$TMP/asset-cache" "$WORK/assets-cached" "file://$TMP/no-such-release" "$ASSETS") \
+	|| fail "fetch_release_assets: the verified cached assets were not used"
+[ "$(mode_of "$WORK/assets-cached/example.bin")" = 644 ] || fail "fetch_release_assets: a cached mode reached the stage"
+ok "fetch_release_assets stages verified cached assets without downloading"
+
+refuses "an asset the manifest pins that the recipe does not list" "example-src.tar, which is not an asset of the release" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-1" "$WORK/assets-1" "file://$RELEASE" \
+	"example.bin $ROM_BYTES"
+refuses "an asset larger than its listed size" "could not fetch example.bin" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-2" "$WORK/assets-2" "file://$RELEASE" \
+	"example.bin $((ROM_BYTES - 1))
+example-src.tar $SRC_BYTES"
+refuses "a manifest pinning fewer assets than the recipe lists" "pins 2 of the release's 3 assets" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-3" "$WORK/assets-3" "file://$RELEASE" \
+	"$ASSETS
+example.txt 100"
+refuses "an asset with another hash" "could not fetch example.bin" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-4" "$WORK/assets-4" "file://$FIX/release-other" \
+	"$ASSETS"
+for cache in "$TMP/asset-cache-2" "$TMP/asset-cache-4"; do
+	if [ -e "$cache/example.bin" ]; then
+		fail "fetch_release_assets: a refused download reached the cache $cache"
+	fi
+done
+for dir in "$WORK/assets-2" "$WORK/assets-4"; do
+	if [ -e "$dir/example.bin" ]; then
+		fail "fetch_release_assets: a refused asset reached the stage $dir"
+	fi
+done
+ok "a refused asset reaches neither the cache nor the stage"
+refuses "an asset listed with no size" "invalid size '0'" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-5" "$WORK/assets-5" "file://$RELEASE" \
+	"example.bin 0"
+refuses "an asset name that is a path" "is not a plain file name" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-5" "$WORK/assets-5" "file://$RELEASE" \
+	"../example.bin $ROM_BYTES"
+refuses "an asset listed twice" "example.bin is listed twice" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-5" "$WORK/assets-5" "file://$RELEASE" \
+	"$ASSETS
+example.bin $ROM_BYTES"
+refuses "staging outside the work directory" "not inside the work directory" \
+	fetch_release_assets "$ASSET_MANIFEST" "$TMP/asset-cache-5" "$TMP/assets-elsewhere" "file://$RELEASE" \
+	"$ASSETS"
 
 # --- zip members ----------------------------------------------------------------
 ZIP="$CACHE/example.zip"
@@ -530,14 +624,14 @@ fat_image "$WORK/out/example-1440.img" 1.44M 0x19930101 EXAMPLE10 "${FILES[@]}"
 fat_image "$WORK/out/example-720.img" 720K 0x19930101 EXAMPLE10 "${FILES[@]}"
 source_tar "$WORK/out/example-src.tar" example-src "$EPOCH" "$STAGE" upstream/.gitignore
 if ! outputs_match "$EXAMPLE" "$WORK/out"; then
-	echo "the outputs differ from the pins in tests/fixtures/example.toml; they are:" >&2
+	echo "the outputs differ from the pins in tests/fixtures/example/media.toml; they are:" >&2
 	for output in example-1440.img example-720.img LICENSE.TXT example-src.tar; do
 		printf '  %s %s\n' "$output" "$(sha256_of "$WORK/out/$output")" >&2
 	done
 	check_outputs "$EXAMPLE" "$WORK/out"
 	fail "outputs_match and check_outputs disagree"
 fi
-ok "every output matches its pin in tests/fixtures/example.toml"
+ok "every output matches its pin in tests/fixtures/example/media.toml"
 
 OUT="$TMP/out/example"
 cp -R "$WORK/out" "$WORK/changed"
@@ -553,13 +647,14 @@ refuses "installing outputs from outside the work directory" "not inside the wor
 
 # A directory on the way into OUT that is a link is refused before anything
 # moves; a link at an output's own path is replaced, not followed.
-sed 's|path = "example-720.img"|path = "disks/example-720.img"|' "$EXAMPLE" > "$WORK/disks.toml"
+mkdir "$WORK/disks"
+sed 's|path = "example-720.img"|path = "disks/example-720.img"|' "$EXAMPLE" > "$WORK/disks/media.toml"
 mkdir -p "$WORK/out-disks/disks" "$TMP/out-disks"
 cp "$WORK/out/example-1440.img" "$WORK/out/LICENSE.TXT" "$WORK/out/example-src.tar" "$WORK/out-disks/"
 cp "$WORK/out/example-720.img" "$WORK/out-disks/disks/"
 ln -s "$OUTSIDE" "$TMP/out-disks/disks"
 refuses "installing through a linked directory" "passes a symbolic link" \
-	install_outputs "$WORK/disks.toml" "$WORK/out-disks" "$TMP/out-disks"
+	install_outputs "$WORK/disks/media.toml" "$WORK/out-disks" "$TMP/out-disks"
 if [ -n "$(ls -A "$OUTSIDE")" ] || [ -e "$TMP/out-disks/example-1440.img" ]; then
 	fail "install_outputs moved an output although the way to another passes a link"
 fi
@@ -608,9 +703,10 @@ if outputs_match "$EXAMPLE" "$WORK/linked"; then
 fi
 ok "outputs_match refuses symbolic links to matching outputs"
 
-printf '[release]\nversion = "1.0"\n' > "$WORK/invalid.toml"
+mkdir "$WORK/invalid"
+printf '[release]\nversion = "1.0"\n' > "$WORK/invalid/media.toml"
 status=0
-(outputs_match "$WORK/invalid.toml" "$OUT" || echo "returned for a rebuild") > "$TMP/invalid.log" 2>&1 || status=$?
+(outputs_match "$WORK/invalid/media.toml" "$OUT" || echo "returned for a rebuild") > "$TMP/invalid.log" 2>&1 || status=$?
 if [ "$status" -eq 0 ] || grep -qF "returned for a rebuild" "$TMP/invalid.log" \
 	|| ! grep -qF "missing required key" "$TMP/invalid.log"; then
 	cat "$TMP/invalid.log" >&2

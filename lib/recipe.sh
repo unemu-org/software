@@ -12,10 +12,11 @@
 # archive gives up only the members the recipe lists, into the run's fresh
 # work directory; every output is built in that directory and reaches out/
 # only through install_outputs, once every pin in the recipe's manifest
-# (media.toml, read by lib/manifest.py) matches. The same recipe gives the
-# same bytes on every run and host: settings that change what the tools write
-# are cleared, the locale, time zone and umask are fixed, and every timestamp
-# comes from the release or the recipe, never from the clock.
+# (media.toml or firmware.toml, read by lib/manifest.py) matches. The same
+# recipe gives the same bytes on every run and host: settings that change
+# what the tools write are cleared, the locale, time zone and umask are
+# fixed, and every timestamp comes from the release or the recipe, never
+# from the clock.
 #
 # A recipe runs with `set -euo pipefail` before sourcing this file (it is
 # refused otherwise), and after sourcing it:
@@ -38,6 +39,11 @@
 #                                               exit
 #   fetch DEST SHA256 MAX_BYTES URL...          a verified download, cached
 #                                               at DEST
+#   fetch_release_assets MANIFEST CACHE STAGE BASE_URL ASSETS
+#                                               every output MANIFEST pins,
+#                                               a release asset fetched from
+#                                               BASE_URL and staged in STAGE
+#                                               (in $WORK) unmodified
 #   zip_expect_members ZIP MEMBER...            ZIP holds exactly these, in
 #                                               this order
 #   zip_extract ZIP MEMBER DIR SHA256           one listed member into DIR
@@ -329,6 +335,47 @@ fetch() {
 	echo "could not fetch $(basename -- "$dest") with SHA-256 $expected from:" >&2
 	printf '  %s\n' "$@" >&2
 	exit 1
+}
+
+# For a recipe whose outputs are a release's assets, unmodified (a firmware
+# package's ROM and source archive): every output MANIFEST pins is fetched
+# from BASE_URL/<name> with the manifest's pin into CACHE/<name> (fetch: a
+# verified download, or a cached copy checked again) and copied into STAGE,
+# inside WORK, with mode 0644. ASSETS lists the release's assets the recipe
+# takes, one "NAME BYTES" per line: NAME a plain file name, BYTES the asset's
+# size, the most its download may bring. The manifest must pin exactly the
+# listed assets, each under its asset name, so its pins are the assets' only
+# pins. Nothing fetched is ever run.
+fetch_release_assets() {
+	if [ "$#" -ne 5 ]; then
+		refuse "usage: fetch_release_assets MANIFEST CACHE STAGE BASE_URL ASSETS"
+	fi
+	local manifest="$1" cache="$2" stage="$3" base="$4" assets="$5" name bytes pins expected staged=0
+	local -A sizes=()
+	inside_work "$stage" fetch_release_assets
+	while read -r name bytes; do
+		[[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9._+-]*$ ]] \
+			|| refuse "fetch_release_assets: '$name' is not a plain file name"
+		[[ "$bytes" =~ ^[1-9][0-9]*$ ]] || refuse "fetch_release_assets: invalid size '$bytes' for $name"
+		if [ -n "${sizes[$name]:-}" ]; then
+			refuse "fetch_release_assets: $name is listed twice"
+		fi
+		sizes["$name"]="$bytes"
+	done < <(printf '%s\n' "$assets")
+	pins="$(manifest_pins "$manifest")" || exit 1
+	mkdir -p -- "$stage" || refuse "fetch_release_assets: cannot create $stage"
+	while read -r name expected; do
+		if [ -z "${sizes[$name]:-}" ]; then
+			refuse "$manifest pins $name, which is not an asset of the release this recipe downloads"
+		fi
+		fetch "$cache/$name" "$expected" "${sizes[$name]}" "$base/$name"
+		cp -- "$cache/$name" "$stage/$name" || refuse "cannot stage $name"
+		chmod 0644 -- "$stage/$name" || refuse "cannot set the mode of $stage/$name"
+		staged=$((staged + 1))
+	done < <(printf '%s\n' "$pins")
+	if [ "$staged" -ne "${#sizes[@]}" ]; then
+		refuse "$manifest pins $staged of the release's ${#sizes[@]} assets"
+	fi
 }
 
 # A repacked archive with an added, missing or reordered member is not the

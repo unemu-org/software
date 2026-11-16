@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tests of lib/manifest.py: the example manifest is accepted, the tags are
+"""Tests of lib/manifest.py: the example manifests are accepted, the tags are
 derived as the naming scheme states, the warnings fire without refusing, and
-each refusal rule fires.
+each refusal rule fires, for set manifests and package manifests alike.
 
     python3 -I tests/manifest_test.py
 """
@@ -17,7 +17,8 @@ import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "lib" / "manifest.py"
-EXAMPLE = HERE / "fixtures" / "example.toml"
+EXAMPLE = HERE / "fixtures" / "example" / "media.toml"
+FIRMWARE = HERE / "fixtures" / "example-firmware" / "firmware.toml"
 
 _spec = importlib.util.spec_from_file_location("manifest", SCRIPT)
 manifest = importlib.util.module_from_spec(_spec)
@@ -43,6 +44,14 @@ def changed(change):
     data = example()
     change(data)
     return data
+
+
+def kind_named(directory, name, kind="media"):
+    """DIRECTORY/NAME/media.toml (or firmware.toml), its directory made: the
+    file name says the manifest's kind."""
+    path = pathlib.Path(directory) / name / f"{kind}.toml"
+    path.parent.mkdir()
+    return path
 
 
 def run(*args):
@@ -166,7 +175,7 @@ class Accepted(unittest.TestCase):
         self.assertEqual(manifest.validate(changed(word_parts)).warnings, ())
 
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "warned.toml"
+            path = kind_named(directory, "warned")
             path.write_text(
                 EXAMPLE.read_text(encoding="utf-8").replace('"utility", "open-source", ', ""),
                 encoding="utf-8",
@@ -264,7 +273,7 @@ class Accepted(unittest.TestCase):
 
     def test_cli_sets(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "pinned.toml"
+            path = kind_named(directory, "pinned")
             pin = "sha256:" + "f" * 64
             text = EXAMPLE.read_text(encoding="utf-8").replace(
                 'format = "1.44M"\n\n', f'format = "1.44M"\ndigest = "{pin}"\n\n', 1
@@ -278,6 +287,9 @@ class Accepted(unittest.TestCase):
         self.assertEqual([d["digest"] for d in described], [pin, None])
         self.assertEqual({d["repository"] for d in described}, {"unemu/media/example"})
         self.assertEqual([d["tag"] for d in described], ["1.0", "1.0-720k"])
+        self.assertEqual({d["kind"] for d in described}, {"media"})
+        # A set's store tag is its ref.
+        self.assertEqual([d["store_tag"] for d in described], [d["ref"] for d in described])
         self.assertEqual({d["license"] for d in described}, {"GPL-2.0-or-later"})
         checked = manifest.load(EXAMPLE)
         out_dir = str(pathlib.Path("out/example").resolve())
@@ -353,7 +365,7 @@ class Refused(unittest.TestCase):
     def test_refs_across_manifests(self):
         with tempfile.TemporaryDirectory() as directory:
             text = EXAMPLE.read_text(encoding="utf-8")
-            other_default = pathlib.Path(directory) / "other-default.toml"
+            other_default = kind_named(directory, "other-default")
             other_default.write_text(text.replace('default_format = "1.44M"', 'default_format = "720K"'),
                                      encoding="utf-8")
             # Each manifest alone is valid; together both give example:1.0.
@@ -365,7 +377,7 @@ class Refused(unittest.TestCase):
             result = run("refs", str(EXAMPLE), str(EXAMPLE))
             self.assertEqual(result.returncode, 1)
 
-            other_work = pathlib.Path(directory) / "other-work.toml"
+            other_work = kind_named(directory, "other-work")
             other_work.write_text(text.replace('work = "example"', 'work = "example2"'), encoding="utf-8")
             result = run("refs", str(EXAMPLE), str(other_work))
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -376,7 +388,7 @@ class Refused(unittest.TestCase):
                 "unemu/media/example2:1.0-720k",
             ])
 
-            broken = pathlib.Path(directory) / "broken.toml"
+            broken = kind_named(directory, "broken")
             broken.write_text("[release\n", encoding="utf-8")
             result = run("refs", str(EXAMPLE), str(broken))
             self.assertEqual(result.returncode, 1)
@@ -607,14 +619,14 @@ class Refused(unittest.TestCase):
 
     def test_cli_refusals(self):
         with tempfile.TemporaryDirectory() as directory:
-            broken = pathlib.Path(directory) / "broken.toml"
+            broken = kind_named(directory, "broken")
             broken.write_text("[release\n", encoding="utf-8")
             result = run("check", str(broken))
             self.assertEqual(result.returncode, 1)
             self.assertIn("not valid TOML", result.stderr)
 
             text = EXAMPLE.read_text(encoding="utf-8").replace('kind = "archive"', 'kind = "other"')
-            changed_file = pathlib.Path(directory) / "changed.toml"
+            changed_file = kind_named(directory, "changed")
             changed_file.write_text(text, encoding="utf-8")
             for command in ("check", "pins"):
                 result = run(command, str(changed_file))
@@ -622,11 +634,299 @@ class Refused(unittest.TestCase):
                 self.assertIn("release.extra[2].kind", result.stderr)
                 self.assertEqual(result.stdout, "")
 
-            result = run("check", str(pathlib.Path(directory) / "missing.toml"))
+            result = run("check", str(pathlib.Path(directory) / "missing" / "media.toml"))
             self.assertEqual(result.returncode, 1)
             self.assertIn("cannot read", result.stderr)
         self.assertEqual(run().returncode, 2)
         self.assertEqual(run("lint", str(EXAMPLE)).returncode, 2)
+
+
+# --- package manifests ----------------------------------------------------------
+
+
+def firmware():
+    with open(FIRMWARE, "rb") as handle:
+        return tomllib.load(handle)
+
+
+def firmware_changed(change):
+    data = firmware()
+    change(data)
+    return data
+
+
+class FirmwareAccepted(unittest.TestCase):
+    def test_example_package(self):
+        checked = manifest.load(FIRMWARE)
+        self.assertIsInstance(checked, manifest.FirmwareManifest)
+        package = checked.package
+        self.assertEqual(package.catalogue_id, "example-bios-1.0")
+        self.assertEqual(package.repository, "unemu/firmware/example-bios-1.0")
+        self.assertEqual(package.tag, "1")
+        self.assertEqual(package.store_tag, "firmware/example-bios-1.0:1")
+        self.assertIsNone(package.digest)
+        self.assertEqual(package.labels, ("system-bios", "open-source"))
+        self.assertEqual(package.description,
+                         'A synthetic system BIOS for the self-test, with its "source" archive.')
+        self.assertEqual(checked.warnings, ())
+        self.assertEqual(manifest.pins(checked), [("example-bios.bin", "1" * 64),
+                                                  ("example-bios-1.0-src.tar", "2" * 64)])
+
+    def test_cli_check_and_pins(self):
+        result = run("check", str(FIRMWARE))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout, f"{FIRMWARE}: ok, firmware package example-bios-1.0 revision 1, "
+                                        "2 outputs\n  unemu/firmware/example-bios-1.0:1\n")
+        result = run("pins", str(FIRMWARE))
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(result.stdout, f"example-bios.bin {'1' * 64}\nexample-bios-1.0-src.tar {'2' * 64}\n")
+
+    def test_revision_digest_and_zip_source(self):
+        pin = "sha256:" + "0123456789abcdef" * 4
+
+        def change(d):
+            d["package"].update(revision=12, digest=pin)
+            d["source"]["path"] = "src/example.zip"
+        checked = manifest.validate_firmware(firmware_changed(change))
+        self.assertEqual((checked.package.tag, checked.package.digest), ("12", pin))
+        # upcli tags the import revision 1 in the store, whatever the revision.
+        self.assertEqual(checked.package.store_tag, "firmware/example-bios-1.0:1")
+        self.assertEqual(manifest.refs([("m", checked)]), ["unemu/firmware/example-bios-1.0:12"])
+
+    def test_limits_accepted(self):
+        def change(d):
+            d["package"]["title"] = "t" * 128
+            d["package"]["description"] = "d" * 4096
+            d["package"]["labels"] = [f"l{i}" for i in range(64)]
+            d["package"]["labels"][0] = "a" * 64
+            d["package"]["license"] = "GPL-2.0-only WITH Classpath-exception-2.0 OR MIT"
+        manifest.validate_firmware(firmware_changed(change))
+
+    def test_import_arguments(self):
+        checked = manifest.load(FIRMWARE)
+        self.assertEqual(
+            manifest.firmware_import_arguments(checked, "/out/example"),
+            [
+                "image", "firmware", "import", "/out/example/example-bios.bin",
+                "--for", "example-bios-1.0",
+                "--title", "Example BIOS 1.0",
+                "--description", checked.package.description,
+                "--vendor", "Example Vendor", "--version", "1.0",
+                "--label", "system-bios", "--label", "open-source",
+                "--open", "--license", "GPL-2.0-or-later",
+                "--source", "/out/example/example-bios-1.0-src.tar",
+            ],
+        )
+
+    def test_artifacts_and_cli_sets(self):
+        checked = manifest.load(FIRMWARE)
+        (artifact,) = manifest.artifacts(checked, "/out/example")
+        self.assertEqual(artifact, manifest.Artifact(
+            kind="firmware",
+            ref="unemu/firmware/example-bios-1.0:1",
+            repository="unemu/firmware/example-bios-1.0",
+            tag="1",
+            store_tag="firmware/example-bios-1.0:1",
+            license="GPL-2.0-or-later",
+            digest=None,
+            arguments=tuple(manifest.firmware_import_arguments(checked, "/out/example")),
+        ))
+        result = run("sets", str(FIRMWARE), "out/example")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out_dir = str(pathlib.Path("out/example").resolve())
+        self.assertEqual(json.loads(result.stdout), [{
+            "kind": "firmware",
+            "ref": "unemu/firmware/example-bios-1.0:1",
+            "repository": "unemu/firmware/example-bios-1.0",
+            "tag": "1",
+            "store_tag": "firmware/example-bios-1.0:1",
+            "license": "GPL-2.0-or-later",
+            "digest": None,
+            "import": manifest.firmware_import_arguments(checked, out_dir),
+        }])
+
+    def test_refs_with_sets(self):
+        checked = [("sets.toml", manifest.load(EXAMPLE)), ("package.toml", manifest.load(FIRMWARE))]
+        self.assertEqual(manifest.refs(checked), [
+            "unemu/media/example:1.0",
+            "unemu/media/example:1.0-720k",
+            "unemu/firmware/example-bios-1.0:1",
+        ])
+        result = run("refs", str(EXAMPLE), str(FIRMWARE))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[-1], "unemu/firmware/example-bios-1.0:1")
+
+    def test_the_recipes(self):
+        # The real package manifests: every pin as the release assets, every
+        # digest pinned, and one package per catalogue id.
+        recipes = sorted((HERE.parent / "recipes").glob("*/firmware.toml"))
+        self.assertEqual([path.parent.name for path in recipes], [
+            "at-bios-1.0.2-unemu.3", "vgabios-0.9d-unemu.1", "xtide-universal-bios-r638-unemu.1"])
+        checked = [(str(path), manifest.load(path)) for path in recipes]
+        for path, package in checked:
+            self.assertIsNotNone(package.package.digest, path)
+            self.assertEqual(package.package.revision, 1, path)
+        self.assertEqual(manifest.refs(checked), [
+            "unemu/firmware/unemu-at-bios-1.0.2-unemu.3:1",
+            "unemu/firmware/vgabios-0.9d-unemu.1-std:1",
+            "unemu/firmware/xub-r638-xtp-ata1f0:1",
+        ])
+
+
+class FirmwareRefused(unittest.TestCase):
+    def refused(self, change, fragment):
+        with self.assertRaises(manifest.Refusal) as caught:
+            manifest.validate_firmware(firmware_changed(change))
+        self.assertIn(fragment, str(caught.exception))
+
+    def test_the_file_name_says_the_kind(self):
+        sets, package = EXAMPLE.read_text(encoding="utf-8"), FIRMWARE.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            # Another name: refused by every command, whatever the file holds.
+            for name, text in (("example.toml", sets), ("example-firmware.toml", package),
+                               ("Media.toml", sets), ("firmware.TOML", package), ("media.toml.bak", sets)):
+                path = pathlib.Path(directory) / name
+                path.write_text(text, encoding="utf-8")
+                for args in (("check", str(path)), ("pins", str(path)), ("refs", str(EXAMPLE), str(path)),
+                             ("sets", str(path), "out")):
+                    result = run(*args)
+                    self.assertEqual((result.returncode, result.stdout), (1, ""), (name, args))
+                    self.assertIn(f"{name!r} is not a manifest name: a set manifest is named media.toml, "
+                                  "a package manifest firmware.toml", result.stderr)
+            # A package manifest saved as media.toml, and the reverse.
+            swapped = (
+                (kind_named(directory, "package-as-sets"), package, "media.toml holds a package manifest"),
+                (kind_named(directory, "sets-as-package", "firmware"), sets, "firmware.toml holds a set manifest"),
+                # One table of the other kind is enough.
+                (kind_named(directory, "mixed-sets"), sets + '\n[rom]\npath = "a.bin"\n',
+                 "media.toml holds a package manifest"),
+                (kind_named(directory, "mixed-package", "firmware"), package + "\n[release]\n",
+                 "firmware.toml holds a set manifest"),
+            )
+            for path, text, fragment in swapped:
+                path.write_text(text, encoding="utf-8")
+                for args in (("check", str(path)), ("pins", str(path)), ("refs", str(path))):
+                    result = run(*args)
+                    self.assertEqual((result.returncode, result.stdout), (1, ""), (path, args))
+                    self.assertIn(fragment, result.stderr, (path, args))
+            # An empty file: refused as its name's kind.
+            for kind, fragment in (("firmware", "manifest: missing required key 'package'"),
+                                   ("media", "manifest: missing required key 'release'")):
+                path = kind_named(directory, f"empty-{kind}", kind)
+                path.write_text("", encoding="utf-8")
+                result = run("check", str(path))
+                self.assertEqual((result.returncode, result.stdout), (1, ""), kind)
+                self.assertIn(fragment, result.stderr, kind)
+                if kind == "firmware":
+                    self.assertNotIn("release", result.stderr)
+            # Only the ROM table: a package manifest without its package.
+            only_rom = kind_named(directory, "only-rom", "firmware")
+            only_rom.write_text(f'[rom]\npath = "a.bin"\nsha256 = "{HASH}"\n', encoding="utf-8")
+            result = run("pins", str(only_rom))
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertIn("manifest: missing required key 'package'", result.stderr)
+        for path in (EXAMPLE, FIRMWARE):
+            self.assertEqual(run("check", str(path)).returncode, 0, path)
+        self.assertIsInstance(manifest.load(EXAMPLE), manifest.Manifest)
+        self.assertIsInstance(manifest.load(FIRMWARE), manifest.FirmwareManifest)
+
+    def test_unknown_keys(self):
+        self.refused(lambda d: d.update(release={}), "manifest: unknown key 'release'")
+        self.refused(lambda d: d["package"].update(open=True), "package: unknown key 'open'")
+        self.refused(lambda d: d["package"].update(tag="1"), "package: unknown key 'tag'")
+        self.refused(lambda d: d["package"].update(source="x.tar"), "package: unknown key 'source'")
+        self.refused(lambda d: d["rom"].update(size=8192), "rom: unknown key 'size'")
+        self.refused(lambda d: d["source"].update(license="MIT"), "source: unknown key 'license'")
+
+    def test_missing_keys(self):
+        for key in ("package", "rom", "source"):
+            self.refused(lambda d, key=key: d.pop(key), f"manifest: missing required key {key!r}")
+        for key in ("catalogue_id", "revision", "title", "description", "vendor", "version", "labels",
+                    "license"):
+            self.refused(lambda d, key=key: d["package"].pop(key), f"package: missing required key {key!r}")
+        for table in ("rom", "source"):
+            for key in ("path", "sha256"):
+                self.refused(lambda d, t=table, k=key: d[t].pop(k), f"{table}: missing required key {key!r}")
+        self.refused(lambda d: d.update(rom="example-bios.bin"), "rom: expected a table")
+
+    def test_catalogue_id(self):
+        for value in ("Example", "-example", "example-", "exa mple", "a/b", "a..b", "", 7, None):
+            self.refused(lambda d, v=value: d["package"].update(catalogue_id=v), "package.catalogue_id")
+        self.refused(lambda d: d["package"].update(catalogue_id="a" * 241), "is longer than 255 bytes")
+        manifest.validate_firmware(firmware_changed(lambda d: d["package"].update(catalogue_id="a" * 240)))
+
+    def test_revision(self):
+        for revision in (0, -1, True, "1", 1.5):
+            self.refused(lambda d, r=revision: d["package"].update(revision=r), "package.revision")
+
+    def test_digest(self):
+        for digest in ("0" * 64, "sha256:" + "0" * 63, "sha256:" + "A" * 64, "SHA256:" + "0" * 64,
+                       " sha256:" + "0" * 64, "", 0):
+            self.refused(lambda d, v=digest: d["package"].update(digest=v), "package.digest")
+
+    def test_texts(self):
+        for key in ("title", "vendor", "version"):
+            for value, fragment in (("x" * 129, "1 to 128 characters"), ("a\tb", "1 to 128 characters"),
+                                    ("", "1 to 128 characters"), (" x", "white space"),
+                                    ("x ", "white space"), ("--x", "starts with '--'"), (1, "expected a string")):
+                self.refused(lambda d, k=key, v=value: d["package"].update({k: v}), f"package.{key}: ")
+                self.refused(lambda d, k=key, v=value: d["package"].update({k: v}), fragment)
+        for value, fragment in (("d" * 4097, "longer than 4096"), ("two\nlines", "without control"),
+                                ("", "non-empty"), ("--d", "starts with '--'"), (" d", "white space")):
+            self.refused(lambda d, v=value: d["package"].update(description=v), fragment)
+
+    def test_labels(self):
+        for labels, fragment in (
+            ([], "non-empty list"),
+            ("open-source", "non-empty list"),
+            (["Open-Source"], "package.labels[1]"),
+            (["open-source", "-x"], "package.labels[2]"),
+            (["a b"], "package.labels[1]"),
+            (["a" * 65], "package.labels[1]"),
+            (["open-source", 7], "package.labels[2]: expected a string"),
+            (["vga", "vga"], "duplicate entry"),
+            ([f"l{i}" for i in range(65)], "more than 64 labels"),
+        ):
+            self.refused(lambda d, v=labels: d["package"].update(labels=v), fragment)
+
+    def test_license(self):
+        for license, fragment in (("GPL-2.0+", "unknown SPDX licence identifier"),
+                                  ("gpl-2.0-only", "unknown SPDX licence identifier"),
+                                  ("MIT AND", "incomplete licence expression"),
+                                  (" MIT", "white space"), ("--MIT", "starts with '--'")):
+            self.refused(lambda d, v=license: d["package"].update(license=v), fragment)
+
+    def test_outputs(self):
+        for table in ("rom", "source"):
+            for path in ("../a.tar", "/a.tar", "a//b.tar", ".a.tar", "a b.tar", "-a.tar", ""):
+                self.refused(lambda d, t=table, p=path: d[t].update(path=p), "is not a path inside out/<recipe>/")
+            for digest in ("0" * 63, "A" * 64, ""):
+                self.refused(lambda d, t=table, v=digest: d[t].update(sha256=v), f"{table}.sha256")
+        self.refused(lambda d: d["rom"].update(path="a" * 125 + ".bin"), "longer than 128 characters")
+        for path in ("src.tar.gz", "src.tgz", "src", "src.TAR"):
+            self.refused(lambda d, p=path: d["source"].update(path=p), "is not a .tar or .zip archive")
+        self.refused(lambda d: d["rom"].update(path="EXAMPLE-BIOS-1.0-SRC.tar"), "is also the ROM's path")
+
+    def test_refs_refuse_shared_refs_and_catalogue_ids(self):
+        checked = manifest.load(FIRMWARE)
+        with self.assertRaises(manifest.Refusal) as caught:
+            manifest.refs([("a.toml", checked), ("b.toml", checked)])
+        self.assertIn("b.toml: package: unemu/firmware/example-bios-1.0:1 is also a.toml: package",
+                      str(caught.exception))
+        # Another revision of the same catalogue id: upcli would import both
+        # as firmware/example-bios-1.0:1.
+        second = manifest.validate_firmware(firmware_changed(lambda d: d["package"].update(revision=2)))
+        with self.assertRaises(manifest.Refusal) as caught:
+            manifest.refs([("a.toml", checked), ("b.toml", second)])
+        self.assertIn("example-bios-1.0 is also the catalogue id of a.toml", str(caught.exception))
+        with tempfile.TemporaryDirectory() as directory:
+            other = kind_named(directory, "other", "firmware")
+            other.write_text(FIRMWARE.read_text(encoding="utf-8").replace("revision = 1", "revision = 2"),
+                             encoding="utf-8")
+            result = run("refs", str(FIRMWARE), str(other))
+            self.assertEqual((result.returncode, result.stdout), (1, ""))
+            self.assertIn("keep one manifest per catalogue id", result.stderr)
 
 
 if __name__ == "__main__":

@@ -8,9 +8,13 @@ Reproducible build recipes for the **open installation media sets** of the unemu
 family: freely redistributable DOS (and later Windows-era) software as floppy or CD
 sets, built from pinned upstream releases with their licences, corresponding source
 archives and documentation, and published as OCI media sets to `unemu/media/` on
-the family's registry. The consumer is **unemupc98** (an IBM PC/AT-class emulator,
-beads prefix `upc`), whose `image media import` / template build and push guard
-define the set format and the publication rules. See `README.md`.
+the family's registry. The repository also builds the **open firmware packages**
+of unemupc's machine templates, published to `unemu/firmware/<catalogue id>`: each
+ROM and its source archive come from the release assets of the unemu-org forks,
+pinned and unmodified. The consumer is **unemupc** (an IBM PC/AT-class emulator;
+CLI `upcli`, beads prefix `upc`), whose `image media import` and `image firmware
+import`, template build and push guard define the set and package formats and the
+publication rules. See `README.md`.
 
 ## Language
 

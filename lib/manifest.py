@@ -1,20 +1,28 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Check a recipe's set manifest and print what the shell needs from it.
+"""Check a recipe's manifest and print what the shell needs from it.
 
     python3 -I lib/manifest.py check MANIFEST   validate; exit 1 on a refusal;
                                                 warnings on stderr
     python3 -I lib/manifest.py pins MANIFEST    "PATH SHA256" per pinned output
-    python3 -I lib/manifest.py refs MANIFEST... every unemu/media/<work>:<tag>;
-                                                exit 1 if two sets of the
-                                                manifests share one
+    python3 -I lib/manifest.py refs MANIFEST... every unemu/media/<work>:<tag>
+                                                and unemu/firmware/<id>:
+                                                <revision>; exit 1 if two of
+                                                the manifests share one
     python3 -I lib/manifest.py sets MANIFEST OUT_DIR
-                                                every set as JSON: its ref,
+                                                every set or package as JSON:
+                                                its kind, ref, store tag,
                                                 licence, digest pin and the
                                                 upcli import arguments, the
                                                 outputs found in OUT_DIR
 
-A manifest (recipes/<recipe>/media.toml) describes every installation set a
-recipe feeds, as unemupc98's `image media import` takes them
+A recipe has one manifest of one of two kinds: a set manifest (media.toml)
+for installation media sets, or a package manifest (firmware.toml) for one
+open firmware package; see "Firmware packages" below. The file name says
+the kind: every command refuses another name, and a file that holds the
+other kind's tables.
+
+A set manifest (recipes/<recipe>/media.toml) describes every installation
+set a recipe feeds, as unemupc98's `image media import` takes them
 (media_import::Request and OpenStatement, built as its template code builds
 them: MediaRelease, MediaSource and media_request in
 crates/pc-image/src/template.rs). Every set of a manifest is one work, the
@@ -65,6 +73,40 @@ Paths are relative to out/<recipe>/. The output pins live only here, so the
 recipe's fast path, its install step and the import read one source of
 truth.
 
+Firmware packages. A package manifest (recipes/<recipe>/firmware.toml)
+describes one open firmware package of unemupc's firmware catalogue, the
+repository unemu/firmware/<catalogue id>, as unemupc's `image firmware
+import --for` takes it (firmware_import::Statement, built as its template
+build builds it: FirmwareSource::statement in
+crates/pc-image/src/template.rs):
+
+    [package]
+    catalogue_id              the catalogue entry the ROM is (unemupc
+                              crates/assembly/src/firmware.rs); also the
+                              repository name under unemu/firmware/
+    revision                  the package revision, the registry tag: a whole
+                              number from 1, raised only when the statement
+                              or the metadata changes for the same ROM bytes
+    digest                    optional, "sha256:<64 hex>": the package digest
+                              the pinned upcli gives; lib/publish.py refuses
+                              another and never pushes a package without one
+    title, vendor, version    1 to 128 characters each
+    description               up to 4096 characters, one line
+    labels                    non-empty list of lower-case ids (letters,
+                              digits, '.', '_' and '-', at most 64 bytes)
+    license                   the SPDX expression the catalogue records for
+                              the ROM; the import states it (--open
+                              --license), and upcli refuses another
+
+    [rom]                     path, sha256: the ROM image
+    [source]                  path (a .tar or .zip), sha256: its corresponding
+                              source archive, the one the catalogue pins
+
+The ref is unemu/firmware/<catalogue id>:<revision>. upcli tags an imported
+package firmware/<catalogue id>:1 in its store, whatever the revision, so a
+catalogue id has one manifest: a new revision replaces the old one in it
+(the old revision's tag stays on the registry and never moves).
+
 Standard library only (tomllib, Python 3.11 or later). Run it with -I, so no
 PYTHON* variable, user site directory or file next to this one changes what
 it does. It reads the manifest and nothing else; it never opens the outputs.
@@ -78,6 +120,22 @@ import sys
 import tomllib
 
 NAMESPACE = "unemu/media"
+FIRMWARE_NAMESPACE = "unemu/firmware"
+# A manifest's kind, by its file name; and the top-level tables of each kind.
+MANIFEST_NAMES = {"media.toml": "media", "firmware.toml": "firmware"}
+SET_TABLES = ("release", "set")
+PACKAGE_TABLES = ("package", "rom", "source")
+# The store tag `upcli image firmware import` gives a package
+# (firmware_import::Candidate::tag): always revision 1.
+FIRMWARE_STORE_TAG = "firmware/{}:1"
+# A firmware label, as image_store::media_set::valid_id takes one.
+FIRMWARE_LABEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+MAX_FIRMWARE_LABELS = 64
+# image_store::firmware::valid_long_text: a description's limit.
+MAX_FIRMWARE_DESCRIPTION = 4096
+# The archives upcli takes as a package's source (image_store::firmware::
+# ArchiveFormat).
+SOURCE_ARCHIVE_SUFFIXES = (".tar", ".zip")
 
 # unemupc98: assembly::descriptors::FLOPPY_TYPES, then "iso-2048"; with the
 # slug a set's tag gives each.
@@ -273,6 +331,68 @@ class OpenStatement:
     license: str
     terms: str
     source: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class Output:
+    """A pinned output file: its path in out/<recipe>/ and SHA-256."""
+
+    path: str
+    sha256: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Package:
+    """What a package manifest states: the catalogue id, the revision, the
+    digest pin and the fields firmware_import::Statement takes."""
+
+    catalogue_id: str
+    revision: int
+    title: str
+    description: str
+    vendor: str
+    version: str
+    labels: tuple
+    license: str
+    # The package digest pin, "sha256:<hex>", or None.
+    digest: str | None = None
+
+    @property
+    def repository(self):
+        return f"{FIRMWARE_NAMESPACE}/{self.catalogue_id}"
+
+    @property
+    def tag(self):
+        return str(self.revision)
+
+    @property
+    def store_tag(self):
+        return FIRMWARE_STORE_TAG.format(self.catalogue_id)
+
+
+@dataclasses.dataclass(frozen=True)
+class FirmwareManifest:
+    package: Package
+    rom: Output
+    source: Output
+    warnings: tuple = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class Artifact:
+    """One set or package as the pipeline handles it: its kind ("media" or
+    "firmware"), its ref (repository:tag), the tag upcli's import writes in
+    the store, the licence expression, the digest pin (or None) and the
+    upcli import arguments (without --store and --create)."""
+
+    kind: str
+    ref: str
+    repository: str
+    tag: str
+    store_tag: str
+    license: str
+    digest: str | None
+    arguments: tuple
 
 
 # --- field checks -----------------------------------------------------------
@@ -791,15 +911,110 @@ def pinned_outputs(manifest):
 
 
 def pins(manifest):
-    """Every pinned output once, as (path, sha256): disks in set and
-    installer order, then the extras."""
+    """Every pinned output once, as (path, sha256): of a set manifest the
+    disks in set and installer order, then the extras; of a package
+    manifest the ROM, then the source archive."""
+    if isinstance(manifest, FirmwareManifest):
+        return [(manifest.rom.path, manifest.rom.sha256), (manifest.source.path, manifest.source.sha256)]
     seen = {}
     for _, path, digest in pinned_outputs(manifest):
         seen.setdefault(path, digest)
     return list(seen.items())
 
 
+# --- firmware packages --------------------------------------------------------
+
+
+def parse_output(value, where):
+    fields(value, where, ("path", "sha256"))
+    path = out_path(value["path"], f"{where}.path")
+    if not valid_text(file_name(path)):
+        raise Refusal(f"{where}.path: the file name {file_name(path)!r} is longer than 128 characters")
+    return Output(path, sha256(value["sha256"], f"{where}.sha256"))
+
+
+def parse_package(value):
+    where = "package"
+    fields(
+        value,
+        where,
+        ("catalogue_id", "revision", "title", "description", "vendor", "version", "labels", "license"),
+        ("digest",),
+    )
+    catalogue_id = slug(value["catalogue_id"], f"{where}.catalogue_id", REPOSITORY,
+                        "a catalogue id (lower-case letters and digits, joined by '.', '_' or '-')")
+    if len(f"{FIRMWARE_NAMESPACE}/{catalogue_id}") > MAX_REPOSITORY:
+        raise Refusal(
+            f"{where}.catalogue_id: {FIRMWARE_NAMESPACE}/{catalogue_id} is longer than {MAX_REPOSITORY} bytes"
+        )
+    revision = value["revision"]
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise Refusal(f"{where}.revision: expected a whole number from 1")
+    digest = None
+    if "digest" in value:
+        digest = string(value["digest"], f"{where}.digest")
+        if not DIGEST.fullmatch(digest):
+            raise Refusal(f"{where}.digest: expected 'sha256:' and 64 lowercase hexadecimal digits")
+    description = long_text(value["description"], f"{where}.description")
+    if len(description) > MAX_FIRMWARE_DESCRIPTION:
+        raise Refusal(f"{where}.description: longer than {MAX_FIRMWARE_DESCRIPTION} characters")
+    labels = value["labels"]
+    if not isinstance(labels, list) or not labels:
+        raise Refusal(f"{where}.labels: expected a non-empty list of strings")
+    if len(labels) > MAX_FIRMWARE_LABELS:
+        raise Refusal(f"{where}.labels: more than {MAX_FIRMWARE_LABELS} labels")
+    for i, label in enumerate(labels, 1):
+        slug(label, f"{where}.labels[{i}]", FIRMWARE_LABEL,
+             "a label: lower-case letters, digits, '.', '_' and '-', starting with a letter "
+             "or digit, at most 64 bytes")
+    if len(set(labels)) != len(labels):
+        raise Refusal(f"{where}.labels: duplicate entry")
+    license = as_option(string(value["license"], f"{where}.license"), f"{where}.license")
+    parse_license(license, f"{where}.license")
+    return Package(
+        catalogue_id=catalogue_id,
+        revision=revision,
+        title=text(value["title"], f"{where}.title"),
+        description=description,
+        vendor=text(value["vendor"], f"{where}.vendor"),
+        version=text(value["version"], f"{where}.version"),
+        labels=tuple(labels),
+        license=license,
+        digest=digest,
+    )
+
+
+def validate_firmware(data):
+    """A checked FirmwareManifest from parsed TOML, or a Refusal naming the
+    field."""
+    fields(data, "manifest", ("package", "rom", "source"))
+    package = parse_package(data["package"])
+    rom = parse_output(data["rom"], "rom")
+    source = parse_output(data["source"], "source")
+    if not source.path.endswith(SOURCE_ARCHIVE_SUFFIXES):
+        raise Refusal(f"source.path: {source.path!r} is not a .tar or .zip archive")
+    if rom.path.lower() == source.path.lower():
+        raise Refusal(f"source.path: {source.path!r} is also the ROM's path (up to case)")
+    return FirmwareManifest(package, rom, source)
+
+
+def holds(data, keys):
+    """Whether parsed TOML has any of the top-level KEYS."""
+    return isinstance(data, dict) and any(key in data for key in keys)
+
+
 def load(path):
+    """A checked set manifest (Manifest) from a file named media.toml, or a
+    package manifest (FirmwareManifest) from one named firmware.toml. The
+    file name says the kind; a file of the other kind's tables is refused
+    by name, and so is any other file name."""
+    name = os.path.basename(path)
+    kind = MANIFEST_NAMES.get(name)
+    if kind is None:
+        raise Refusal(
+            f"{name!r} is not a manifest name: a set manifest is named media.toml, "
+            "a package manifest firmware.toml"
+        )
     try:
         with open(path, "rb") as handle:
             data = tomllib.load(handle)
@@ -807,6 +1022,18 @@ def load(path):
         raise Refusal(f"cannot read: {error.strerror}") from error
     except tomllib.TOMLDecodeError as error:
         raise Refusal(f"not valid TOML: {error}") from error
+    if kind == "firmware":
+        if holds(data, SET_TABLES):
+            raise Refusal(
+                "firmware.toml holds a set manifest ([release], [[set]]); a package manifest "
+                "has [package], [rom] and [source], and a set manifest is named media.toml"
+            )
+        return validate_firmware(data)
+    if holds(data, PACKAGE_TABLES):
+        raise Refusal(
+            "media.toml holds a package manifest ([package], [rom], [source]); a set manifest "
+            "has [release] and [[set]], and a package manifest is named firmware.toml"
+        )
     return validate(data)
 
 
@@ -892,40 +1119,121 @@ def import_arguments(request, statement):
     return args
 
 
-def describe_sets(manifest, out_dir):
-    """Every set of MANIFEST as `sets` prints it: its ref, repository and
-    tag, the licence expression, the digest pin (None without one) and the
-    import arguments, with the outputs' paths joined to OUT_DIR."""
+def firmware_import_arguments(manifest, out_dir):
+    """The arguments of `upcli image firmware import` (after the program
+    name) that import the package of MANIFEST, a FirmwareManifest, as
+    unemupc's template build imports it (FirmwareSource::statement): the ROM
+    for its catalogue id, the title, description, vendor and version, the
+    labels in the manifest's order (the import sorts them), the open
+    statement and the source archive, with the outputs joined to OUT_DIR;
+    without --store and --create.
+
+    The template build states no licence: the catalogue records the ROM's,
+    and the package is open because the source archive is the one the
+    catalogue pins. --open --license states the same licence explicitly
+    (firmware_import::rom_license), so the package digest is the template
+    build's (measured at upcli.pin for every package here), and upcli
+    refuses a licence other than the catalogue's. lib/publish.py also
+    checks the licence the package states against the manifest's."""
+    package = manifest.package
+
+    def join_out(path):
+        return os.path.join(out_dir, *path.split("/"))
+
+    args = ["image", "firmware", "import", join_out(manifest.rom.path), "--for", package.catalogue_id]
+    args += ["--title", package.title, "--description", package.description]
+    args += ["--vendor", package.vendor, "--version", package.version]
+    for label in package.labels:
+        args += ["--label", label]
+    args += ["--open", "--license", package.license, "--source", join_out(manifest.source.path)]
+    return args
+
+
+def artifacts(manifest, out_dir):
+    """Every set of a set manifest, or the package of a package manifest, as
+    an Artifact whose import arguments name the outputs in OUT_DIR."""
+    if isinstance(manifest, FirmwareManifest):
+        package = manifest.package
+        return [Artifact(
+            kind="firmware",
+            ref=f"{package.repository}:{package.tag}",
+            repository=package.repository,
+            tag=package.tag,
+            store_tag=package.store_tag,
+            license=package.license,
+            digest=package.digest,
+            arguments=tuple(firmware_import_arguments(manifest, out_dir)),
+        )]
     statement = open_statement(manifest)
-    described = []
+    result = []
     for media_set in manifest.sets:
         request = import_request(manifest, media_set.tag, out_dir)
-        described.append({
-            "ref": request.tag,
-            "repository": manifest.release.repository,
-            "tag": media_set.tag,
-            "license": statement.license,
-            "digest": media_set.digest,
-            "import": import_arguments(request, statement),
-        })
-    return described
+        result.append(Artifact(
+            kind="media",
+            ref=request.tag,
+            repository=manifest.release.repository,
+            tag=media_set.tag,
+            store_tag=request.tag,
+            license=statement.license,
+            digest=media_set.digest,
+            arguments=tuple(import_arguments(request, statement)),
+        ))
+    return result
+
+
+def describe(manifest, out_dir):
+    """Every set or package of MANIFEST as `sets` prints it: its kind, ref,
+    repository and tag, the tag the import writes in the store, the licence
+    expression, the digest pin (None without one) and the import arguments,
+    with the outputs' paths joined to OUT_DIR."""
+    return [
+        {
+            "kind": artifact.kind,
+            "ref": artifact.ref,
+            "repository": artifact.repository,
+            "tag": artifact.tag,
+            "store_tag": artifact.store_tag,
+            "license": artifact.license,
+            "digest": artifact.digest,
+            "import": list(artifact.arguments),
+        }
+        for artifact in artifacts(manifest, out_dir)
+    ]
 
 
 def refs(manifests):
-    """Every set's reference, unemu/media/<work>:<tag>, across MANIFESTS
-    (pairs of a name and a checked Manifest), in order; a Refusal when two
-    sets anywhere share one, as two manifests for one work can (another
-    default format, for one), since a published tag never moves."""
+    """Every reference across MANIFESTS (pairs of a name and a checked
+    manifest), in order: each set's unemu/media/<work>:<tag> and each
+    package's unemu/firmware/<catalogue id>:<revision>. A Refusal when two
+    of them share one, as two manifests for one work can (another default
+    format, for one), since a published tag never moves; and when two
+    package manifests name one catalogue id, since upcli imports both under
+    one store tag."""
     seen = {}
+    packages = {}
     result = []
     for name, checked in manifests:
-        for i, media_set in enumerate(checked.sets, 1):
-            ref = f"{checked.release.repository}:{media_set.tag}"
-            where = f"{name}: set[{i}]"
+        if isinstance(checked, FirmwareManifest):
+            package = checked.package
+            entries = [(f"{name}: package", f"{package.repository}:{package.tag}")]
+        else:
+            entries = [
+                (f"{name}: set[{i}]", f"{checked.release.repository}:{media_set.tag}")
+                for i, media_set in enumerate(checked.sets, 1)
+            ]
+        for where, ref in entries:
             if ref in seen:
                 raise Refusal(f"{where}: {ref} is also {seen[ref]}")
             seen[ref] = where
             result.append(ref)
+        if isinstance(checked, FirmwareManifest):
+            if package.catalogue_id in packages:
+                raise Refusal(
+                    f"{name}: package: {package.catalogue_id} is also the catalogue id of "
+                    f"{packages[package.catalogue_id]}; upcli imports both as {package.store_tag}: "
+                    "keep one manifest per catalogue id (a new revision replaces the old one)"
+                )
+            packages[package.catalogue_id] = name
     return result
 
 
@@ -942,7 +1250,7 @@ def main(argv):
         except Refusal as refusal:
             print(f"{argv[2]}: {refusal}", file=sys.stderr)
             return 1
-        described = describe_sets(checked, os.path.abspath(argv[3]))
+        described = describe(checked, os.path.abspath(argv[3]))
         print(json.dumps(described, indent=2, ensure_ascii=True))
         return 0
     if len(argv) >= 3 and argv[1] == "refs":
@@ -970,7 +1278,12 @@ def main(argv):
     except Refusal as refusal:
         print(f"{path}: {refusal}", file=sys.stderr)
         return 1
-    if command == "check":
+    if command == "check" and isinstance(manifest, FirmwareManifest):
+        package = manifest.package
+        print(f"{path}: ok, firmware package {package.catalogue_id} revision {package.revision}, "
+              f"{len(pins(manifest))} outputs")
+        print(f"  {package.repository}:{package.tag}")
+    elif command == "check":
         for warning in manifest.warnings:
             print(f"{path}: warning: {warning}", file=sys.stderr)
         disks = sum(len(s.disks) for s in manifest.sets)
