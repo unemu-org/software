@@ -3,7 +3,8 @@
 `lib/publish.py` builds the recipes, imports their sets and packages with
 the pinned unemupc CLI, `upcli`, into a scratch store, checks them, and
 pushes them to the registry only when asked. Without `--push` it is a dry
-run: it needs no credentials and never contacts a registry.
+run: it needs no credentials and writes to no registry, and it reads one
+only when `--skip-published` asks.
 
 ## The pinned upcli
 
@@ -88,6 +89,7 @@ There is no option to skip it. Nothing else in the output is read.
 
 ```sh
 python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
+                          [--skip-published] [--no-build]
                           [--push | --allow-unpinned] [RECIPE|REF]...
 ```
 
@@ -95,14 +97,17 @@ python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
 | --- | --- |
 | `--cli UPCLI` | the upcli binary; default `$UPCLI`; a name without a slash is looked up on `PATH` |
 | `--store DIR` | import into `DIR`, a new directory that is kept (default: a fresh store under `build/`, removed afterwards) |
-| `--experimental RUN` | push to the experimental targets (see below); `RUN` is the CI run number, from 1 |
+| `--experimental RUN` | push to the experimental targets (see below); `RUN` is the CI run id, from 1 |
+| `--skip-published` | read each pinned set's and package's own tag first; skip what the registry already serves (see below) |
+| `--no-build` | run no `build.sh`: the outputs must already be in `out/<recipe>/` and match their pins |
 | `--push` | push every checked set and package |
 | `--allow-unpinned` | let a dry run pass with sets or packages that have no digest pin yet; never with `--push` |
 | `RECIPE` or `REF` | select a recipe (`freedos-1.4-floppy`) or one set or package by its ref (`unemu/media/freedos:1.4`, `unemu/firmware/xub-r638-xtp-ata1f0:1`); default: everything |
 
 The registry host is `UNEMU_REGISTRY_HOST`, checked as upcli checks one (a
 name with a dot or a port, or `localhost`; no scheme or path). A dry run
-without it names `registry.unemu.dev`, which it never contacts.
+without it names `registry.unemu.dev`, which it contacts only for the
+anonymous reads of `--skip-published`.
 
 ### Steps
 
@@ -111,20 +116,36 @@ A set or package that fails a step is not taken further.
 1. `upcli.toml` is read, every recipe's manifest is checked, and no ref may
    appear twice across them. A refusal stops the run.
 2. The version check (above).
-3. Each selected recipe's `build.sh` runs (it stops at once when its outputs
+3. With `--skip-published`, each selected set or package that has a digest
+   pin is looked up under its own tag, `unemu/media/<work>:<tag>` or
+   `unemu/firmware/<id>:<revision>`, with `--experimental` too: an
+   anonymous read, as before a push. The pinned digest there makes it
+   `published`: it is not built, imported or pushed, and a recipe whose
+   selected sets and packages are all published is not built at all.
+   Another digest there makes it `refused`: a tag never moves, so it needs a
+   new tag (`-rN`) or revision. A missing tag goes on as usual, and so does
+   one without a pin, which cannot be compared and ends `unpinned`. A failed
+   read fails it.
+4. Each selected recipe's `build.sh` runs (it stops at once when its outputs
    already match their pins), and every output is checked against its pin.
-   A recipe never sees a variable whose name starts with `UNEMU` or contains
-   `PASSWORD`, `TOKEN`, `SECRET` or `CREDENTIAL`.
-4. Each set is imported with `upcli image media import` and checked with
+   A recipe never sees a variable whose name starts with `UNEMU`,
+   `GITHUB_`, `RUNNER_` or `ACTIONS_`, is `BASH_ENV` or `ENV`, or contains
+   `PASSWORD`, `TOKEN`, `SECRET` or `CREDENTIAL`. With `--no-build` no
+   `build.sh` runs: the outputs must already be in `out/<recipe>/`, each
+   with its pinned SHA-256, or the recipe's sets and packages fail with a
+   message that says to build it first. This lets a CI job that holds
+   credentials, and runs no recipe code, push what a job without them
+   built.
+5. Each set is imported with `upcli image media import` and checked with
    `upcli image media show`; each package is imported with `upcli image
    firmware import --for` and checked with `upcli image firmware show`,
    which must state the manifest's metadata, ROM, source archive and
    licences. Both shows must end by reporting it pushable to `unemu/`. Then
    `upcli image push --dry-run`'s guard must allow the target. upcli runs
    with an environment and a registries file of its own.
-5. The digest is compared with the manifest's pin.
-6. With `--push`, and only when everything selected passed and is pinned,
-   each is pushed (see below).
+6. The digest is compared with the manifest's pin.
+7. With `--push`, and only when everything selected passed and is pinned,
+   each one that is not `published` is pushed (see below).
 
 ### Outcomes
 
@@ -134,13 +155,14 @@ stdout, and its progress on stderr.
 | Outcome | Meaning |
 | --- | --- |
 | `dry run` | checked, and the digest equals the manifest's pin |
+| `published` | `--skip-published`: its own tag already serves the pinned digest; not built, imported or pushed |
 | `unpinned` | checked, but the manifest pins no digest; never pushed |
 | `mismatch` | upcli gives another digest than the pin |
 | `failed` | a build, check, import, guard, registry read or push failed |
 | `held` | not pushed, because another one failed or is unpinned, or an earlier push failed |
 | `pushed` | pushed, and read back with the same digest |
 | `present` | the registry already serves this digest under the tag |
-| `refused` | the registry holds another digest under the tag |
+| `refused` | the registry holds another digest under the tag (the target before a push, or with `--skip-published` its own tag) |
 | `unconfirmed` | pushed, but the read-back failed or named another digest |
 
 The exit status is 0 when everything selected passed (and, with `--push`,
@@ -149,7 +171,8 @@ fails a dry run too, unless `--allow-unpinned` is given.
 
 ## Pushing
 
-Pushing is the maintainer's step:
+Pushing is the maintainer's step: by approving a run of the publish
+workflow ([CI](#ci)), or by hand:
 
 ```sh
 export UNEMU_REGISTRY_HOST=registry.unemu.dev UNEMU_REGISTRY_USER=ACCOUNT
@@ -173,8 +196,9 @@ What keeps a push safe:
   the read cannot see is refused. A redirect, a timeout or any other answer
   stops the push.
 - **Tags never move.** A tag that already serves the same digest is skipped
-  (`present`); one that serves another digest is `refused`. upcli is never
-  given `--move`, and the movable `latest` alias is not pushed.
+  (`present`, or `published` before anything is built with
+  `--skip-published`); one that serves another digest is `refused`. upcli
+  is never given `--move`, and the movable `latest` alias is not pushed.
 - **A read-back after.** Each push is read back anonymously and must serve
   the pushed digest.
 
@@ -207,26 +231,192 @@ The `.ci<RUN>` suffix is not part of the media tag or the package revision.
 An experimental repository longer than 255 bytes, or a tag longer than 128
 characters, is refused before anything is built.
 
-## CI (intended, not yet wired)
+## CI
 
-The workflows are open work (beads um-7jx.6 and um-7jx.9). Until they run,
-the digest pins are measured with the macOS arm64 upcli of the pinned
-release; the Linux x86_64 one is first checked in CI. The intended setup,
-already prepared on GitHub:
+Three GitHub Actions workflows in [`.github/workflows/`](../.github/workflows/)
+run the checks and the publications. Every job that runs recipes runs its
+steps in the pinned devShell (`nix develop`); the push jobs use the
+runner's own Python and curl and no Nix. `upcli` is the release binary
+`lib/upcli.py fetch` takes, on the runner's Linux x86_64. The digest pins
+were measured with the macOS arm64 upcli of the pinned release; the check
+workflow is the first to run the Linux one, and the pins must hold for it
+too.
 
-- every pull request runs the checks and the dry run, which needs no
-  secrets; fork pull requests get none;
-- on `main`, the environment `experimental` (deployment branch `main`)
-  holds the secret `UNEMU_EXPERIMENTAL_PASSWORD` of the account
-  `ci-experimental`, which may write only `unemu/experimental/**`; CI pushes
-  there with `--experimental`;
-- promotion runs in the protected environment `media` (deployment branch
-  `main`, the maintainer as required reviewer), whose secret
-  `UNEMU_PROMOTE_PASSWORD` belongs to the account `ci-promote`, which may
-  write `unemu/media/**` and `unemu/firmware/**`; it moves a set or package
-  by digest, unchanged;
-- the repository variable `UNEMU_REGISTRY_HOST` names the registry;
-- each step that writes maps its account and secret into
-  `UNEMU_REGISTRY_USER` and `UNEMU_REGISTRY_PASSWORD`, for that step only.
+### The rule: only what changed, never what is published
+
+A set or package that the registry already serves under its own tag, with
+its pinned digest, is never built or pushed again by the workflows that
+publish (experimental and publish): both pass `--skip-published`, so
+FreeDOS and the firmware packages, once published, stay out of every later
+publication. The check workflow does rebuild a recipe, published or not,
+when the recipe or a shared input changes, and every week: that is a check,
+and it pushes nothing. A tag that serves another digest is `refused` and
+fails the run: a published tag never moves, so a corrected set needs a new
+tag (`-rN`), and a package the next revision.
+
+### Which recipes a run takes
+
+`lib/changed.py BASE HEAD` prints the recipes a change touches (`--json`
+for one JSON list, `--all` for every recipe):
+
+- a recipe is a directory `recipes/<recipe>/` at `HEAD` with a manifest; a
+  change to any file in it selects it, a file moved out of it too, and a
+  deleted recipe is not selected;
+- a change to a shared input selects every recipe: `lib/`, `flake.nix`,
+  `flake.lock`, `upcli.toml` and `.github/workflows/` (the steps that build,
+  compare and dry-run the recipes);
+- anything else selects nothing: `docs/` and the other documentation,
+  `tests/` (the check command runs them on every change; no recipe reads
+  them) and the tooling configuration;
+- a `BASE` of all zeros (a new branch) or one that is not a commit in the
+  clone (a force push) selects every recipe.
+
+It reads the two commits with git alone, never the working tree.
+
+### check.yml: every pull request and push to main
+
+On `pull_request`, on a push to `main`, weekly (Monday) and by hand. No
+secret and no environment: fork pull requests run all of it. A pull
+request's newest run replaces its older one; every other run has a
+concurrency group of its own commit, so no push to `main` cancels another.
+
+1. The README's check command.
+2. The selection: `BASE` is the pull request's base, or the commit before
+   the push; the weekly and manual runs take every recipe. A pull request's
+   base may be older than `main`'s tip, which can select more than the pull
+   request touches, never less.
+3. For each selected recipe, a job of its own (a matrix, at most 256
+   recipes in one run): `build.sh` from scratch (no `out/<recipe>/`, no
+   `build/`), the outputs set aside, `build.sh` from scratch again, and both
+   outputs compared byte for byte. Downloads come from an `actions/cache`
+   keyed on the recipe's directory, `lib/` and `flake.lock`; the recipes
+   check every cached file against its pin, so the cache never decides a
+   byte. The weekly run goes without it, over every recipe, to catch
+   vanished mirrors and host drift.
+4. `lib/upcli.py fetch`, then `lib/publish.py RECIPE`, the dry run: every
+   row must read `dry run`. A new recipe without a digest pin fails as
+   `unpinned`, with the digest the pinned upcli gives in its row, ready to
+   pin. The table goes to the job summary.
+5. One job, `check result`, passes when everything above passed or nothing
+   was selected: the status to require for `main`.
+
+### experimental.yml: every push to main
+
+On a push to `main` (and by hand, over every recipe), one run at a time: a
+run waits for the one before it. Two jobs:
+
+1. **build**, without an environment or a secret, in the devShell: the
+   selection of the push, as above; `lib/upcli.py fetch`; then
+   `lib/publish.py --skip-published --experimental RUN RECIPE...`, `RUN`
+   being the run's id (`github.run_id`, unique in the repository; a rerun
+   pushes the same digest under the same tag). This builds and checks only
+   what is not published yet; an unpinned or failing set or package stops
+   the run here, and the table goes to the job summary. What it built, the
+   recipes' `out/<recipe>/` (on a fresh runner `out/` holds nothing else),
+   goes to the push job as an artifact kept for one day. If nothing is
+   selected, or everything selected is published, nothing is built and the
+   run ends here, successfully.
+2. **push**, on a fresh runner, in the environment `experimental`, with
+   the credentials of `ci-experimental` (write on `unemu/experimental/**`
+   only): a fresh checkout and a fresh `lib/upcli.py fetch` (never from the
+   artifact), the artifact into `out/`, then the same selection with
+   `--skip-published --no-build --push`. No recipe code runs in this job:
+   `--no-build` checks every pinned output's SHA-256 before the import, and
+   the sets and packages are pushed to
+   `unemu/experimental/<kind>/<name>:<tag>.ci<RUN>`. The selection comes
+   from the build job's outputs, which its recipe code could forge; the
+   most that buys is another choice of pinned, unpublished sets and
+   packages pushed to `unemu/experimental/`, each still with its pinned
+   digest.
+
+### publish.yml: publication, approved by the maintainer
+
+By hand only (`workflow_dispatch`), from `main`. Its input `select` takes
+recipes or refs separated by spaces; empty means every recipe; a newline,
+carriage return or tab in it is refused. One run at a time, in a
+concurrency group of its own (not the experimental one, so a push to `main`
+never cancels a waiting publication). Two jobs, as above:
+
+1. **build**, without an environment or a secret: `lib/publish.py
+   --skip-published SELECT...`, the dry run, which builds only what is not
+   on `unemu/media/` or `unemu/firmware/` yet. Its table is in the run's
+   summary before anything is approved. What it built goes to the push job
+   as an artifact kept for 7 days.
+2. **push**, in the protected environment `media`, which waits for the
+   maintainer's approval, with the credentials of `ci-promote` (write on
+   `unemu/media/**` and `unemu/firmware/**`): the same with `--no-build
+   --push`, on a fresh runner, from the artifact. It reads `select` from
+   the run's input itself, with the same refusal, never from the build
+   job's outputs, which its recipe code could forge (an empty selection
+   would mean every recipe).
+
+The maintainer approves the push job within 7 days, while the artifact is
+kept; after that the push job fails for want of it, and the remedy is to
+re-run the whole run (or start a new one), which builds again.
+
+**Decision of the maintainer (2026-11-17): no promotion from
+`unemu/experimental/`.** The publish workflow rebuilds only the sets and
+packages that are not published yet and pushes them when they give their
+pinned digest; nothing is copied from `unemu/experimental/`. The guarantee
+is the digest pin: a set or package reaches `unemu/media/` or
+`unemu/firmware/` only when the pinned upcli gives exactly the digest its
+manifest pins, the digest an experimental push of the same recipe gave as
+well. The publication therefore does not depend on an experimental tag that
+retention may have removed.
+
+### When a change is missed
+
+A push to `main` can leave its recipes unchecked or unpushed: GitHub keeps
+only the newest waiting run of a concurrency group and cancels an older
+waiting one (in the `experimental` group), a commit message with `[skip
+ci]` starts no run, and a failed run stays failed until someone runs it
+again. The remedy is to re-run the failed or cancelled run, or to start a
+workflow by hand: check.yml and experimental.yml by hand take every recipe,
+and the experimental run still builds and pushes only what is not published.
+Nothing is ever published to `unemu/media/` or `unemu/firmware/` without
+publish.yml, which takes every recipe by default.
+
+### Credentials
+
+- Every workflow sets `permissions: contents: read`; none uses
+  `pull_request_target`, and actions/checkout keeps no credentials in the
+  clone.
+- The environment `experimental` (deployment branch `main`) holds the
+  secret `UNEMU_EXPERIMENTAL_PASSWORD` of the account `ci-experimental`;
+  the protected environment `media` (deployment branch `main`, the
+  maintainer as required reviewer) holds `UNEMU_PROMOTE_PASSWORD` of the
+  account `ci-promote`. The account names are written in the workflows.
+- Only the push jobs name an environment, and only their push step maps the
+  account and secret into `UNEMU_REGISTRY_USER` and
+  `UNEMU_REGISTRY_PASSWORD`, next to `UNEMU_REGISTRY_HOST` from the
+  repository variable of that name. The jobs that run recipes have no
+  environment and no secret.
+- The boundary is the job split: the push jobs run no recipe code, on a
+  runner of their own, so a recipe cannot reach the credentials through a
+  file it leaves behind, a process that outlives its step, or a changed
+  `lib/publish.py` or upcli. They take from the build job its outputs
+  (each checked against its pin) and whether anything was built;
+  experimental's push job also takes the selection, publish's reads it
+  from the input. Hiding variables is only a backstop on top of that:
+  `lib/publish.py` hides from every recipe the `UNEMU*` and secret-like
+  variables and the runner's own (`GITHUB_*`, `RUNNER_*`, `ACTIONS_*`,
+  `BASH_ENV`, `ENV`), so a recipe cannot reach a later step's environment,
+  path or outputs through them, but code that runs in a job can always find
+  that job's files.
+- The artifacts of a public repository can be downloaded by any signed-in
+  GitHub user while they are kept (one day for experimental, 7 days for
+  publish): the built outputs are public for that time, as they are once
+  pushed to `unemu/experimental/`. They hold the recipes' outputs only,
+  open by the same rules as the sets and packages.
+- `cachix/install-nix-action` runs in the jobs that run recipes, never in
+  a push job. It writes `access-tokens = github.com=<the job's
+  GITHUB_TOKEN>` into `/etc/nix/nix.conf`, which a recipe can read (the
+  token can only read this public repository, and expires with the job),
+  and adds the runner's user to Nix's `trusted-users`.
+- Every third-party action is pinned by its full commit SHA, with the
+  release in a comment: `actions/checkout`, `actions/cache`,
+  `actions/upload-artifact`, `actions/download-artifact` and
+  `cachix/install-nix-action` (upstream Nix from its official installer,
+  a short shell script, no telemetry).
 
 GitHub-hosted runners use public DNS.

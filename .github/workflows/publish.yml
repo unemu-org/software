@@ -1,0 +1,195 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Publication to <host>/unemu/media/ and <host>/unemu/firmware/, started by
+# hand. Only the sets and packages whose own tag is not on the registry yet
+# are built and pushed; everything already published is skipped, never
+# rebuilt or pushed again. Two jobs: the recipes run in the build job, which
+# has no environment and no secret, and its dry-run table is in the run's
+# summary before the maintainer approves the push job (environment media).
+# The push job, on a fresh runner with the credentials, runs no recipe code,
+# takes the outputs as an artifact, checked against their pins, and reads
+# the selection from the input itself. See docs/publishing.md.
+
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      select:
+        description: >-
+          Recipes or refs to publish, separated by spaces (unemu/media/<work>:<tag>,
+          unemu/firmware/<id>:<revision>); empty: every recipe. Published ones are skipped.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One publication at a time; a run waits for the one before.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and check (no credentials)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        # Every step in the pinned devShell.
+        shell: nix develop --command bash -euo pipefail {0}
+    outputs:
+      # Whether anything was built, so there is something to push. The push
+      # job reads the selection from the input itself.
+      any: ${{ steps.built.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+
+      # Words separated by spaces; a newline, carriage return or tab is
+      # refused rather than guessed at.
+      - name: Read the selection
+        id: select
+        env:
+          SELECT: ${{ inputs.select }}
+        run: |
+          case "$SELECT" in
+            *[$'\n\r\t']*)
+              echo "::error::the select input holds a newline, carriage return or tab; separate recipes and refs with spaces"
+              exit 1
+              ;;
+          esac
+          read -ra words < <(printf '%s\n' "$SELECT")
+          selection="$(python3 -I -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${words[@]}")"
+          echo "selected: $selection (empty: every recipe)"
+          echo "selection=$selection" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the pinned upcli
+        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+
+      # Published sets and packages are not built; unpinned ones fail the run.
+      - name: Build and check
+        env:
+          UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
+          SELECTION: ${{ steps.select.outputs.selection }}
+        run: |
+          python3 -I -c 'import json, sys; print(end="".join(s + "\0" for s in json.loads(sys.argv[1])))' \
+            "$SELECTION" > "$RUNNER_TEMP/selection"
+          mapfile -d '' -t selectors < "$RUNNER_TEMP/selection"
+          status=0
+          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --skip-published \
+            -- "${selectors[@]}" > "$RUNNER_TEMP/dry-run.txt" || status=$?
+          cat "$RUNNER_TEMP/dry-run.txt"
+          {
+            echo "### Dry run"
+            echo '```'
+            cat "$RUNNER_TEMP/dry-run.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # On a fresh runner out/ holds only what this run built: the recipes
+      # with something left to push.
+      - name: What to push
+        id: built
+        run: |
+          shopt -s nullglob
+          built=(out/*/)
+          if [ "${#built[@]}" -gt 0 ]; then
+            echo "built: ${built[*]}"
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "nothing built: everything selected is published"
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Hand the outputs to the push job
+        if: steps.built.outputs.any == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: outputs
+          path: out/
+          # The maintainer approves the push job within this time, or re-runs.
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+  push:
+    name: push to unemu/media/ and unemu/firmware/
+    needs: build
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Holds UNEMU_PROMOTE_PASSWORD; the maintainer approves each run of this
+    # job; deploys from main only.
+    environment: media
+    defaults:
+      run:
+        # The runner's own bash, Python and curl: no Nix in this job.
+        shell: bash -euo pipefail {0}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Python 3.11 or later
+        run: |
+          python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else
+            "lib/publish.py needs Python 3.11 or later (tomllib); this runner has " + sys.version.split()[0])'
+
+      # Fetched and checked here again, never taken from the artifact.
+      - name: Fetch the pinned upcli
+        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+
+      - name: Take the outputs of the build job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: outputs
+          path: out
+
+      # From the input, as the build job reads it, never from the build
+      # job's outputs: recipe code ran there and could forge them.
+      - name: Read the selection
+        id: select
+        env:
+          SELECT: ${{ inputs.select }}
+        run: |
+          case "$SELECT" in
+            *[$'\n\r\t']*)
+              echo "::error::the select input holds a newline, carriage return or tab; separate recipes and refs with spaces"
+              exit 1
+              ;;
+          esac
+          read -ra words < <(printf '%s\n' "$SELECT")
+          selection="$(python3 -I -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${words[@]}")"
+          echo "selected: $selection (empty: every recipe)"
+          echo "selection=$selection" >> "$GITHUB_OUTPUT"
+
+      # No recipe code runs here: --no-build checks every pinned output's
+      # SHA-256 before the import.
+      - name: Push to unemu/media/ and unemu/firmware/
+        env:
+          UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
+          UNEMU_REGISTRY_USER: ci-promote
+          UNEMU_REGISTRY_PASSWORD: ${{ secrets.UNEMU_PROMOTE_PASSWORD }}
+          SELECTION: ${{ steps.select.outputs.selection }}
+        run: |
+          python3 -I -c 'import json, sys; print(end="".join(s + "\0" for s in json.loads(sys.argv[1])))' \
+            "$SELECTION" > "$RUNNER_TEMP/selection"
+          mapfile -d '' -t selectors < "$RUNNER_TEMP/selection"
+          status=0
+          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --skip-published --no-build --push \
+            -- "${selectors[@]}" > "$RUNNER_TEMP/push.txt" || status=$?
+          cat "$RUNNER_TEMP/push.txt"
+          {
+            echo "### Push"
+            echo '```'
+            cat "$RUNNER_TEMP/push.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

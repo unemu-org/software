@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The checks of every pull request and every push to main, and a weekly cold
+# run: the README's check command, then each recipe the change touches
+# (lib/changed.py) built twice from scratch with identical bytes, and the
+# publish pipeline's dry run over it. No secrets, no environment, no registry
+# write: fork pull requests run all of it. See docs/publishing.md.
+
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays: every recipe, cold (no download cache), to catch vanished
+    # mirrors and host drift.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's newest run replaces its older one. Every other run has a
+# group of its own commit, so a push to main never cancels another.
+concurrency:
+  group: check-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # Every step in the pinned devShell.
+    shell: nix develop --command bash -euo pipefail {0}
+
+jobs:
+  tests:
+    name: tests and selection
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      recipes: ${{ steps.select.outputs.recipes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so lib/changed.py can compare any two commits.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+
+      - name: The README's check command
+        run: |
+          shellcheck -x lib/recipe.sh tests/*.sh recipes/*/build.sh
+          bash tests/recipe-selftest.sh
+          python3 -I tests/manifest_test.py
+          python3 -I tests/publish_test.py
+          python3 -I tests/upcli_test.py
+          python3 -I tests/iso_extract_test.py
+          python3 -I tests/changed_test.py
+          for m in tests/fixtures/*/media.toml tests/fixtures/*/firmware.toml \
+              recipes/*/media.toml recipes/*/firmware.toml; do
+            python3 -I lib/manifest.py check "$m"
+          done
+          python3 -I lib/manifest.py refs recipes/*/media.toml recipes/*/firmware.toml
+
+      - name: Select the recipes
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) recipes="$(python3 -I lib/changed.py --json "$PR_BASE" HEAD)" ;;
+            push) recipes="$(python3 -I lib/changed.py --json "$BEFORE" HEAD)" ;;
+            *) recipes="$(python3 -I lib/changed.py --json --all)" ;;
+          esac
+          echo "selected: $recipes"
+          echo "recipes=$recipes" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build ${{ matrix.recipe }}
+    needs: tests
+    if: needs.tests.outputs.recipes != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        recipe: ${{ fromJSON(needs.tests.outputs.recipes) }}
+    env:
+      RECIPE: ${{ matrix.recipe }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+
+      # Downloads only; every recipe checks each cached file against its pin
+      # before use, so a cache never decides a byte. The weekly run goes
+      # without it.
+      - name: Download cache
+        if: github.event_name != 'schedule'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cache/${{ matrix.recipe }}
+          key: downloads-${{ matrix.recipe }}-${{ hashFiles(format('recipes/{0}/**', matrix.recipe), 'lib/**', 'flake.lock') }}
+
+      - name: Build twice from scratch and compare
+        run: |
+          first="$RUNNER_TEMP/first-build"
+          rm -rf -- "out/$RECIPE" build "$first"
+          bash "recipes/$RECIPE/build.sh"
+          mv -- "out/$RECIPE" "$first"
+          rm -rf -- build
+          bash "recipes/$RECIPE/build.sh"
+          diff -r --no-dereference -- "$first" "out/$RECIPE"
+          echo "two builds from scratch gave the same bytes"
+
+      - name: Fetch the pinned upcli
+        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+
+      - name: Dry run
+        run: |
+          status=0
+          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" -- "$RECIPE" \
+            > "$RUNNER_TEMP/summary.txt" || status=$?
+          cat "$RUNNER_TEMP/summary.txt"
+          {
+            echo "### Dry run of $RECIPE"
+            echo '```'
+            cat "$RUNNER_TEMP/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+  # One status to require: every job above passed, or nothing was selected.
+  result:
+    name: check result
+    needs: [tests, build]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        shell: bash
+        env:
+          TESTS: ${{ needs.tests.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "tests: $TESTS, build: $BUILD"
+          [ "$TESTS" = success ] && { [ "$BUILD" = success ] || [ "$BUILD" = skipped ]; }

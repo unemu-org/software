@@ -16,6 +16,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import socket
 import stat
 import sys
@@ -542,6 +543,34 @@ class Arguments(Case):
             ["A", "Kept"],
         )
 
+    def test_recipe_environment_hides_the_ci_runner(self):
+        # What would let a recipe reach past its own run on a GitHub runner:
+        # the files later steps read (GITHUB_ENV, GITHUB_PATH, GITHUB_OUTPUT,
+        # GITHUB_STATE), the runner's directories and settings, and the
+        # start-up files bash and sh read (BASH_ENV, ENV).
+        self.repo.recipe("demo")
+        marker = self.repo.base / "sourced"
+        startup = self.repo.base / "startup.sh"
+        startup.write_text(f"touch '{marker}'\n", encoding="utf-8")
+        hidden = {
+            "GITHUB_ENV": "x", "GITHUB_PATH": "x", "GITHUB_OUTPUT": "x", "GITHUB_STATE": "x",
+            "GITHUB_STEP_SUMMARY": "x", "GITHUB_WORKSPACE": "x", "github_lower": "x",
+            "RUNNER_TEMP": "x", "RUNNER_TOOL_CACHE": "x", "ACTIONS_ID_TOKEN_REQUEST_URL": "x",
+            "ACTIONS_CACHE_URL": "x", "BASH_ENV": str(startup), "ENV": str(startup),
+        }
+        kept = {"MY_GITHUB_NOTE": "x", "ENVIRONMENT": "x", "XENV": "x", "BASH_ENVX": "x", "CI": "true"}
+        code, _, stderr = self.repo.run(environ=self.repo.environ(**hidden, **kept))
+        self.assertEqual(code, 0, stderr)
+        build_env = (self.repo.root / "recipes" / "demo" / "build-env.txt").read_text()
+        names = {line.split("=", 1)[0] for line in build_env.splitlines() if "=" in line}
+        for name in hidden:
+            self.assertNotIn(name, names)
+        for name in kept:
+            self.assertIn(name, names)
+        # bash never read the start-up file.
+        self.assertFalse(marker.exists())
+        self.assertEqual(sorted(publish.recipe_environment({**hidden, **kept})), sorted(kept))
+
     def test_selection(self):
         self.repo.recipe("demo")
         self.repo.recipe("other", work="other")
@@ -1040,6 +1069,273 @@ class Experimental(Case):
         self.assertEqual(code, 1)
         self.assertIn(f"the target tag '{version}-720k.ci1234' is longer than 128 characters", stderr)
         self.assertEqual(self.repo.calls(), [])
+
+
+class SkipPublished(Case):
+    """--skip-published: what the registry already serves under its own tag
+    is neither built, imported nor pushed."""
+
+    def publish(self, ref, digest=None):
+        """Put REF on the fake registry, with its pinned digest unless
+        DIGEST is given."""
+        repository, tag = ref.rsplit(":", 1)
+        if digest is None:
+            store_tag = f"firmware/{repository.rsplit('/', 1)[1]}:1" if "/firmware/" in ref else ref
+            digest = fake_digest(store_tag)
+        self.repo.registry.held[f"{HOST}/{ref}"] = digest
+
+    def imports(self):
+        return [c["argv"] for c in self.repo.calls() if c["argv"][1:3] in (["media", "import"],
+                                                                          ["firmware", "import"])]
+
+    def built(self, recipe):
+        return (self.repo.root / "recipes" / recipe / "build-env.txt").exists()
+
+    def test_published_is_neither_built_imported_nor_pushed(self):
+        self.repo.recipe("demo")
+        self.publish("unemu/media/demo:2.0")
+        self.publish("unemu/media/demo:2.0-720k")
+        for args in (("--skip-published",), ("--skip-published", "--push")):
+            self.repo.log.unlink(missing_ok=True)
+            self.repo.registry.calls.clear()
+            code, stdout, stderr = self.repo.run(*args)
+            self.assertEqual(code, 0, stderr)
+            for tag in ("2.0", "2.0-720k"):
+                row = self.row(stdout, "unemu/media/demo", tag)
+                self.assertEqual(row[2:4], [fake_digest(f"unemu/media/demo:{tag}"), "published"], args)
+            self.assertFalse(self.built("demo"), args)
+            # upcli only checks its version: no import, no dry run, no push.
+            self.assertEqual([c["argv"] for c in self.repo.calls()], [["--version"]], args)
+            # One read of each tag, and none for a push.
+            self.assertEqual(self.repo.registry.calls, [(HOST, "unemu/media/demo", "2.0"),
+                                                        (HOST, "unemu/media/demo", "2.0-720k")], args)
+            self.assertIn("== skip demo: published, not built", stderr)
+            self.assertEqual(list((self.repo.root / "build").iterdir()), [])
+
+    def test_another_digest_is_refused(self):
+        self.repo.recipe("demo")
+        self.publish("unemu/media/demo:2.0", "sha256:" + "d" * 64)
+        code, stdout, _ = self.repo.run("--skip-published")
+        self.assertEqual(code, 1)
+        row = self.row(stdout, "unemu/media/demo", "2.0")
+        self.assertEqual(row[2:4], ["sha256:" + "d" * 64, "refused"])
+        self.assertIn(f"{HOST} already serves sha256:{'d' * 64} under this tag, the manifest pins "
+                      f"{fake_digest('unemu/media/demo:2.0')}; a media tag never moves: give it a new tag (-rN)",
+                      stdout)
+        # The other set is still built and checked; the refused one is not
+        # imported.
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "dry")
+        self.assertEqual([a[a.index("--tag") + 1] for a in self.imports()], ["unemu/media/demo:2.0-720k"])
+        code, stdout, _ = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outcome(stdout, "2.0"), "refused")
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "held")
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_a_missing_tag_is_built_and_pushed_as_before(self):
+        self.repo.recipe("demo")
+        code, stdout, stderr = self.repo.run("--skip-published")
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue(self.built("demo"))
+        self.assertEqual(len(self.imports()), 2)
+        self.assertEqual(self.outcome(stdout, "2.0"), "dry")
+        self.assertEqual(self.repo.registry.calls, [(HOST, "unemu/media/demo", "2.0"),
+                                                    (HOST, "unemu/media/demo", "2.0-720k")])
+        self.assertEqual(self.repo.pushes(), [])
+        self.repo.registry.calls.clear()
+        code, stdout, stderr = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 0, stderr)
+        for tag in ("2.0", "2.0-720k"):
+            self.assertEqual(self.outcome(stdout, tag), "pushed")
+        # The skip reads, then the read before and after each push.
+        self.assertEqual(self.repo.registry.calls, [(HOST, "unemu/media/demo", t) for t in
+                                                    ("2.0", "2.0-720k", "2.0", "2.0", "2.0-720k", "2.0-720k")])
+
+    def test_an_unpinned_item_is_not_compared(self):
+        self.repo.recipe("demo", pins=("match", None))
+        self.publish("unemu/media/demo:2.0")
+        self.publish("unemu/media/demo:2.0-720k", fake_digest("unemu/media/demo:2.0-720k"))
+        code, stdout, _ = self.repo.run("--skip-published")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outcome(stdout, "2.0"), "published")
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "unpinned")
+        # Only the pinned set was read; the unpinned one was built and
+        # imported to measure its digest.
+        self.assertEqual(self.repo.registry.calls, [(HOST, "unemu/media/demo", "2.0")])
+        self.assertTrue(self.built("demo"))
+        self.assertEqual([a[a.index("--tag") + 1] for a in self.imports()], ["unemu/media/demo:2.0-720k"])
+        code, stdout, stderr = self.repo.run("--skip-published", "--allow-unpinned")
+        self.assertEqual(code, 0, stderr)
+        code, stdout, _ = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "unpinned")
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_mixed(self):
+        self.repo.recipe("demo")
+        self.repo.recipe("other", work="other")
+        self.repo.firmware_recipe("bios")
+        self.publish("unemu/media/demo:2.0")
+        self.publish("unemu/firmware/demo-bios:1")
+        code, stdout, stderr = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.outcome(stdout, "2.0"), "published")
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "pushed")
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "published")
+        for tag in ("2.0", "2.0-720k"):
+            self.assertEqual(self.outcome(stdout, tag, "unemu/media/other"), "pushed")
+        self.assertEqual((self.built("bios"), self.built("demo"), self.built("other")), (False, True, True))
+        self.assertEqual([a[a.index("--tag") + 1] for a in self.imports()],
+                         ["unemu/media/demo:2.0-720k", "unemu/media/other:2.0", "unemu/media/other:2.0-720k"])
+        self.assertEqual([p["argv"][3] for p in self.repo.pushes()], [
+            f"{HOST}/unemu/media/demo:2.0-720k", f"{HOST}/unemu/media/other:2.0", f"{HOST}/unemu/media/other:2.0-720k",
+        ])
+
+    def test_a_package(self):
+        self.repo.firmware_recipe("bios")
+        self.publish("unemu/firmware/demo-bios:1")
+        code, stdout, stderr = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "published")
+        self.assertFalse(self.built("bios"))
+        self.assertEqual(self.repo.pushes(), [])
+        self.publish("unemu/firmware/demo-bios:1", "sha256:" + "d" * 64)
+        code, stdout, stderr = self.repo.run("--skip-published")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "refused")
+        self.assertIn("a package revision never moves: give it the next revision", stdout)
+        self.assertIn("== skip bios: nothing of it is left to build", stderr)
+        self.assertFalse(self.built("bios"))
+
+    def test_a_failed_read_fails_closed(self):
+        self.repo.recipe("demo")
+        self.repo.firmware_recipe("bios")
+        self.repo.registry.error = "HTTP 503"
+        code, stdout, _ = self.repo.run("--skip-published")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.outcome(stdout, "2.0"), "failed")
+        self.assertIn(f"reading unemu/media/demo:2.0 on {HOST}: HTTP 503", stdout)
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "failed")
+        self.assertEqual((self.built("demo"), self.built("bios")), (False, False))
+        self.assertEqual(self.imports(), [])
+        # Only the first read (the package's: recipes in name order) fails:
+        # the package fails, the sets are built and checked, and nothing is
+        # pushed.
+        self.repo.registry.error = None
+        self.repo.registry.errors = {1: RuntimeError("synthetic")}
+        self.repo.registry.calls.clear()
+        code, stdout, _ = self.repo.run("--skip-published", "--push")
+        self.assertEqual(code, 1)
+        self.assertIn("unexpected RuntimeError: synthetic", stdout)
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "failed")
+        self.assertEqual(self.outcome(stdout, "2.0"), "held")
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "held")
+        self.assertEqual((self.built("demo"), self.built("bios")), (True, False))
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_experimental_reads_the_published_tag_and_pushes_the_rest(self):
+        self.repo.recipe("demo")
+        self.repo.firmware_recipe("bios")
+        self.publish("unemu/media/demo:2.0")
+        code, stdout, stderr = self.repo.run("--skip-published", "--experimental", "42", "--push")
+        self.assertEqual(code, 0, stderr)
+        # The published set's row names the tag that was read.
+        self.assertEqual(self.outcome(stdout, "2.0"), "published")
+        self.assertEqual(self.outcome(stdout, "2.0-720k.ci42", "unemu/experimental/media/demo"), "pushed")
+        self.assertEqual(self.row(stdout, "unemu/experimental/firmware/demo-bios", "1.ci42")[3], "pushed")
+        self.assertEqual(self.repo.registry.calls[:3], [(HOST, "unemu/firmware/demo-bios", "1"),
+                                                        (HOST, "unemu/media/demo", "2.0"),
+                                                        (HOST, "unemu/media/demo", "2.0-720k")])
+        # Never pushed to the experimental targets again.
+        self.assertEqual([p["argv"][2:4] for p in self.repo.pushes()], [
+            ["firmware/demo-bios:1", f"{HOST}/unemu/experimental/firmware/demo-bios:1.ci42"],
+            ["unemu/media/demo:2.0-720k", f"{HOST}/unemu/experimental/media/demo:2.0-720k.ci42"],
+        ])
+        self.assertNotIn((HOST, "unemu/experimental/media/demo", "2.0.ci42"), self.repo.registry.calls)
+
+
+class NoBuild(Case):
+    """--no-build: the outputs already in out/<recipe>/, checked against
+    their pins, and no build.sh."""
+
+    def built(self, recipe):
+        return (self.repo.root / "recipes" / recipe / "build-env.txt").exists()
+
+    @staticmethod
+    def steps(calls):
+        """Each upcli call as (what, store tag[, target])."""
+        result = []
+        for argv in (c["argv"] for c in calls):
+            if argv == ["--version"]:
+                result.append(("version",))
+            elif argv[1:3] == ["media", "import"]:
+                result.append(("import", argv[argv.index("--tag") + 1]))
+            elif argv[1:3] == ["firmware", "import"]:
+                result.append(("import", f"firmware/{argv[argv.index('--for') + 1]}:1"))
+            elif argv[2:3] == ["show"]:
+                result.append(("show", argv[3]))
+            else:
+                result.append(("dry run" if "--dry-run" in argv else "push", argv[2], argv[3]))
+        return result
+
+    def test_the_outputs_are_used_as_they_are(self):
+        self.repo.recipe("demo")
+        self.repo.firmware_recipe("bios")
+        code, stdout, stderr = self.repo.run("--no-build")
+        self.assertEqual(code, 0, stderr)
+        self.assertFalse(self.built("demo") or self.built("bios"))
+        self.assertIn("== check the outputs of demo (--no-build)", stderr)
+        self.assertEqual(self.outcome(stdout, "2.0"), "dry")
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "dry")
+        # Only the build is left out: every set and package is imported,
+        # shown and dry-run pushed as without --no-build.
+        checks = []
+        for tag, target in (("firmware/demo-bios:1", "unemu/firmware/demo-bios:1"),
+                            ("unemu/media/demo:2.0", "unemu/media/demo:2.0"),
+                            ("unemu/media/demo:2.0-720k", "unemu/media/demo:2.0-720k")):
+            checks += [("import", tag), ("show", tag), ("dry run", tag, f"{HOST}/{target}")]
+        self.assertEqual(self.steps(self.repo.calls()), [("version",), *checks])
+        self.repo.log.unlink()
+        code, stdout, stderr = self.repo.run("--no-build", "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.outcome(stdout, "2.0-720k"), "pushed")
+        pushes = [("push", c[1], c[2]) for c in checks if c[0] == "dry run"]
+        self.assertEqual(self.steps(self.repo.calls()), [("version",), *checks, *pushes])
+        self.assertFalse(self.built("demo") or self.built("bios"))
+
+    def test_missing_or_changed_outputs_fail(self):
+        self.repo.recipe("demo")
+        out = self.repo.root / "out" / "demo"
+        image = out / "720k" / "b.img"
+        hint = "; build the recipe first (bash recipes/demo/build.sh, or this pipeline without --no-build)"
+        image.unlink()
+        for args in (("--no-build",), ("--no-build", "--push")):
+            code, stdout, _ = self.repo.run(*args)
+            self.assertEqual(code, 1, args)
+            self.assertEqual(self.outcome(stdout, "2.0"), "failed", args)
+            self.assertIn(f"--no-build: missing output 720k/b.img in {out}{hint}", stdout)
+        image.write_bytes(b"changed")
+        code, stdout, _ = self.repo.run("--no-build")
+        self.assertEqual(code, 1)
+        self.assertIn("--no-build: output 720k/b.img: SHA-256", stdout)
+        shutil.rmtree(out)
+        code, stdout, _ = self.repo.run("--no-build")
+        self.assertEqual(code, 1)
+        self.assertIn("--no-build: missing output 144m/a.img", stdout)
+        self.assertFalse(self.built("demo"))
+        self.assertEqual([c["argv"] for c in self.repo.calls()], [["--version"]] * 4)
+        self.assertEqual(self.repo.pushes(), [])
+
+    def test_a_published_recipe_needs_no_outputs(self):
+        self.repo.recipe("demo")
+        self.repo.firmware_recipe("bios")
+        self.repo.registry.held[f"{HOST}/unemu/firmware/demo-bios:1"] = fake_digest("firmware/demo-bios:1")
+        shutil.rmtree(self.repo.root / "out" / "bios")
+        code, stdout, stderr = self.repo.run("--skip-published", "--no-build", "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.row(stdout, "unemu/firmware/demo-bios", "1")[3], "published")
+        self.assertEqual(self.outcome(stdout, "2.0"), "pushed")
+        self.assertFalse(self.built("demo") or self.built("bios"))
 
 
 class Firmware(Case):

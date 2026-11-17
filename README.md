@@ -44,8 +44,13 @@ credentials come from the environment and reach only the `upcli image push`
 call. A tag never moves: a tag that already holds another digest is
 refused, and `--move` is never used; the movable `latest` alias is not
 pushed yet. For CI, `--experimental RUN` targets `unemu/experimental/`
-instead, from where a set or package is to be promoted by digest. Pushing
-is the maintainer's step. Details: [docs/publishing.md](docs/publishing.md).
+instead. Pushing is the maintainer's step. Details:
+[docs/publishing.md](docs/publishing.md).
+
+[CI](docs/publishing.md#ci) checks what a change touches, pushes it from
+`main` to `unemu/experimental/` and publishes it on the maintainer's
+approval; the workflows that publish never rebuild or push what is already
+published.
 
 ## Repository layout
 
@@ -55,6 +60,8 @@ is the maintainer's step. Details: [docs/publishing.md](docs/publishing.md).
   checker.
 - `lib/publish.py`, `lib/upcli.py`, `upcli.toml`: the publish pipeline and
   the pinned upcli ([docs/publishing.md](docs/publishing.md)).
+- `lib/changed.py`, `.github/workflows/`: the CI and the recipes a change
+  touches.
 - `tests/`: offline tests and example manifests.
 - `docs/`: the reference documentation.
 - `cache/`, `build/`, `out/`: downloads, scratch and outputs; never
@@ -72,6 +79,7 @@ nix develop --command bash -c '
   python3 -I tests/publish_test.py &&
   python3 -I tests/upcli_test.py &&
   python3 -I tests/iso_extract_test.py &&
+  python3 -I tests/changed_test.py &&
   for m in tests/fixtures/*/media.toml tests/fixtures/*/firmware.toml \
       recipes/*/media.toml recipes/*/firmware.toml; do
     python3 -I lib/manifest.py check "$m" || exit 1

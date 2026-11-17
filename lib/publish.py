@@ -4,6 +4,7 @@ unemupc CLI (upcli) into a scratch store, check them, and push them only when
 asked.
 
     python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
+                              [--skip-published] [--no-build]
                               [--push | --allow-unpinned] [RECIPE|REF]...
 
     --cli UPCLI         the upcli binary of the unemupc release in
@@ -15,12 +16,20 @@ asked.
                         afterwards)
     --experimental RUN  target <host>/unemu/experimental/media/<work>:
                         <media-tag>.ci<RUN> and <host>/unemu/experimental/
-                        firmware/<id>:<revision>.ci<RUN> (RUN: the CI run
-                        number, from 1) instead of <host>/unemu/media/<work>:
+                        firmware/<id>:<revision>.ci<RUN> (RUN: the CI run's
+                        id, from 1) instead of <host>/unemu/media/<work>:
                         <media-tag> and <host>/unemu/firmware/<id>:<revision>
+    --skip-published    read each pinned set's and package's own tag on the
+                        registry (unemu/media/... or unemu/firmware/...,
+                        with --experimental too) anonymously first: one that
+                        already serves the pinned digest is `published` and
+                        is neither built, imported nor pushed; one that
+                        serves another digest is `refused`
+    --no-build          run no build.sh: the outputs must already be in
+                        out/<recipe>/ and match their pins
     --push              push every checked set and package; without it
                         nothing is written to any registry, and nothing is
-                        read from one
+                        read from one unless --skip-published asks
     --allow-unpinned    a dry run that passes with sets or packages whose
                         manifest pins no digest yet (to measure a new
                         recipe's digests); never with --push
@@ -36,10 +45,23 @@ steps, in order; a set or package that fails one is not taken further:
  1. Every recipe's manifest checked as `manifest.py check` does, and every
     ref as `manifest.py refs` does across all of them (the same functions,
     called here). A refusal stops the run before anything else.
- 2. Each selected recipe's build.sh (whose fast path stops at once when its
+ 2. With --skip-published, for each selected set or package with a digest
+    pin, an anonymous HTTPS read of its own tag on the registry
+    (anonymous_digest, as before a push), whatever the target: a tag that
+    serves the pinned digest is `published` and goes no further, so a
+    recipe whose sets and packages are all published is not built; a tag
+    that serves another digest is `refused` (a tag never moves: a new one is
+    needed); a missing tag goes on. A read that fails fails the set or
+    package. One without a pin cannot be compared: it goes on, and ends
+    `unpinned` as below.
+ 3. Each selected recipe's build.sh (whose fast path stops at once when its
     outputs already match their pins), then every output of the recipe
-    checked here against its pin.
- 3. Each set imported with `upcli image media import` (the arguments are
+    checked here against its pin. With --no-build no build.sh runs: the
+    outputs must already be in out/<recipe>/ with their pinned hashes, or
+    the recipe's sets and packages fail. This is how a CI job that holds
+    credentials, and runs no recipe code, pushes what a job without them
+    built.
+ 4. Each set imported with `upcli image media import` (the arguments are
     manifest.import_arguments), then checked with `upcli image media show`;
     each package imported with `upcli image firmware import --for` (the
     arguments are manifest.firmware_import_arguments), then checked with
@@ -49,18 +71,19 @@ steps, in order; a set or package that fails one is not taken further:
     Then `upcli image push --dry-run` against the target, whose guard must
     say allowed. All run offline. The import, the show and the dry run must
     name the same store tag, target and digest.
- 4. The digest compared with the manifest's digest pin: another digest fails
+ 5. The digest compared with the manifest's digest pin: another digest fails
     the run. One without a pin is reported with its digest, is never
     pushed, and fails the run unless --allow-unpinned is given.
- 5. With --push, and only when everything selected passed and is pinned:
-    for each, an anonymous HTTPS read of the target tag on the registry
-    first (anonymous_digest). A missing tag is pushed with `upcli image
-    push` (never --move) and read back: a read-back that fails or names
-    another digest leaves it `unconfirmed` (pushed, not confirmed). A tag
-    that already names the same digest is skipped; a tag that names another
-    digest is refused: a media tag and a package revision never move. Any
-    failure fails the run, and nothing after it is pushed; everything still
-    gets its row in the summary. The `latest` alias is never pushed.
+ 6. With --push, and only when everything selected passed and is pinned:
+    for each that is not `published`, an anonymous HTTPS read of the target
+    tag on the registry first (anonymous_digest). A missing tag is pushed
+    with `upcli image push` (never --move) and read back: a read-back that
+    fails or names another digest leaves it `unconfirmed` (pushed, not
+    confirmed). A tag that already names the same digest is skipped; a tag
+    that names another digest is refused: a media tag and a package revision
+    never move. Any failure fails the run, and nothing after it is pushed;
+    everything still gets its row in the summary. The `latest` alias is
+    never pushed.
 
 A summary table (repository, tag, digest, outcome, licence) goes to
 stdout, progress to stderr. Exit status: 0 when everything selected passed
@@ -68,16 +91,17 @@ stdout, progress to stderr. Exit status: 0 when everything selected passed
 
 The registry host is UNEMU_REGISTRY_HOST, checked as upcli checks one: a
 name with a dot or a port, or localhost, the port at most 65535. A dry run
-without it names the family default registry.unemu.dev, which it never
-contacts; a push needs it set. A push takes its credentials only from the
-environment, UNEMU_REGISTRY_USER and UNEMU_REGISTRY_PASSWORD, and hands
-them to the upcli push alone, through its environment: never on a command
-line, never to a recipe, never to another upcli command. A recipe gets the
-caller's environment without any variable whose name starts with UNEMU or
-contains PASSWORD, TOKEN, SECRET or CREDENTIAL. upcli runs with an
-environment of its own (PATH, a fresh HOME and TMPDIR in the run's work
-directory, LC_ALL=C, TZ=UTC) and a registries file of its own: the target
-host, public, unemu/ only.
+without it names the family default registry.unemu.dev, which it contacts
+only for the anonymous reads of --skip-published; a push needs it set. A
+push takes its credentials only from the environment, UNEMU_REGISTRY_USER
+and UNEMU_REGISTRY_PASSWORD, and hands them to the upcli push alone,
+through its environment: never on a command line, never to a recipe, never
+to another upcli command. A recipe gets the caller's environment without
+any variable whose name starts with UNEMU, GITHUB_, RUNNER_ or ACTIONS_, is
+BASH_ENV or ENV, or contains PASSWORD, TOKEN, SECRET or CREDENTIAL. upcli
+runs with an environment of its own (PATH, a fresh HOME and TMPDIR in the
+run's work directory, LC_ALL=C, TZ=UTC) and a registries file of its own:
+the target host, public, unemu/ only.
 
 The CLI pin is the unemupc release in upcli.toml (lib/upcli.py). Before
 anything is built, `upcli --version` runs once, and its commit line, the
@@ -141,10 +165,14 @@ USER_ENV = "UNEMU_REGISTRY_USER"
 PASSWORD_ENV = "UNEMU_REGISTRY_PASSWORD"
 HOST_ENV = "UNEMU_REGISTRY_HOST"
 # What a recipe never sees: every UNEMU... variable (the registry pair and
-# host, UNEMU_REGISTRY, upcli's default-host override, and UNEMUPC_*), and
-# anything that looks like a secret. upcli gets the pair and the host only
-# for a push.
-RECIPE_HIDDEN_PREFIX = "UNEMU"
+# host, UNEMU_REGISTRY, upcli's default-host override, and UNEMUPC_*),
+# anything that looks like a secret, and what would let it reach past its
+# own run on a CI runner: the GitHub Actions files and settings (GITHUB_ENV,
+# GITHUB_PATH, GITHUB_OUTPUT, GITHUB_STATE, RUNNER_TEMP, ACTIONS_*) and the
+# start-up files of bash and sh (BASH_ENV, ENV). upcli gets the pair and
+# the host only for a push.
+RECIPE_HIDDEN_PREFIXES = ("UNEMU", "GITHUB_", "RUNNER_", "ACTIONS_")
+RECIPE_HIDDEN_NAMES = ("BASH_ENV", "ENV")
 RECIPE_HIDDEN_WORDS = ("PASSWORD", "TOKEN", "SECRET", "CREDENTIAL")
 # upcli's family default registry (image_registry::reference::DEFAULT_REGISTRY).
 DEFAULT_HOST = "registry.unemu.dev"
@@ -507,13 +535,15 @@ def stream():
 
 def recipe_environment(environ):
     """The caller's environment without anything named UNEMU... (the
-    registry variables among them) and anything whose name holds PASSWORD,
-    TOKEN, SECRET or CREDENTIAL, in any case."""
+    registry variables among them), GITHUB_..., RUNNER_..., ACTIONS_...,
+    BASH_ENV or ENV, and anything whose name holds PASSWORD, TOKEN, SECRET
+    or CREDENTIAL, in any case."""
 
     def hidden(name):
         upper = name.upper()
         return (
-            upper.startswith(RECIPE_HIDDEN_PREFIX)
+            upper.startswith(RECIPE_HIDDEN_PREFIXES)
+            or upper in RECIPE_HIDDEN_NAMES
             or any(word in upper for word in RECIPE_HIDDEN_WORDS)
         )
 
@@ -741,6 +771,12 @@ def parse_args(argv, environ):
     parser.add_argument("--experimental", metavar="RUN",
                         help="target unemu/experimental/media/<work>:<media-tag>.ci<RUN> and "
                              "unemu/experimental/firmware/<id>:<revision>.ci<RUN>")
+    parser.add_argument("--skip-published", action="store_true",
+                        help="read each pinned set's and package's own tag anonymously first; one that "
+                             "already serves the pinned digest is neither built nor pushed")
+    parser.add_argument("--no-build", action="store_true",
+                        help="run no build.sh: the outputs must already be in out/<recipe>/ and match "
+                             "their pins")
     parser.add_argument("--push", action="store_true", help="push the checked sets and packages")
     parser.add_argument("--allow-unpinned", action="store_true",
                         help="a dry run passes with sets or packages that have no digest pin yet")
@@ -749,7 +785,7 @@ def parse_args(argv, environ):
     if not options.cli:
         parser.error(f"--cli UPCLI (or ${CLI_ENV}) is required")
     if options.experimental is not None and not RUN.fullmatch(options.experimental):
-        parser.error("--experimental RUN takes the CI run number: 1 to 20 digits, not starting with 0")
+        parser.error("--experimental RUN takes the CI run id: 1 to 20 digits, not starting with 0")
     if options.push and options.allow_unpinned:
         parser.error("--allow-unpinned is for a dry run; nothing without a digest pin is ever pushed")
     return parser, options
@@ -841,7 +877,7 @@ def select(parser, root, selectors, out_root):
 
 def set_target(item, experimental):
     """Set the item's target repository and tag: its own, or with
-    EXPERIMENTAL (a run number) unemu/experimental/<kind>/<name>:
+    EXPERIMENTAL (a run id) unemu/experimental/<kind>/<name>:
     <tag>.ci<RUN>. A Failure when the experimental repository or tag is
     longer than a repository name or tag may be: the manifests keep their
     own within the limits, not the experimental one."""
@@ -948,13 +984,30 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
     log(f"upcli --version reports commit {pin.commit}, as pinned")
     log(f"store {store}")
 
+    if options.skip_published:
+        log(f"== read the published tags on {host}")
+        for item in items:
+            check_published(host, item, registry)
+
     for recipe in dict.fromkeys(item.recipe for item in items):
-        group = [item for item in items if item.recipe == recipe]
+        selected = [item for item in items if item.recipe == recipe]
+        # Only what is still to do: not published, not refused or failed.
+        group = [item for item in selected if item.outcome == "not checked"]
+        if not group:
+            if all(item.outcome == "published" for item in selected):
+                log(f"== skip {recipe}: published, not built")
+            else:
+                log(f"== skip {recipe}: nothing of it is left to build")
+            continue
         out_dir = root / "out" / recipe
-        log(f"== build {recipe}")
         try:
-            build(root, recipe, environ)
-            check_outputs(group[0].checked, out_dir)
+            if options.no_build:
+                log(f"== check the outputs of {recipe} (--no-build)")
+                existing_outputs(recipe, group[0].checked, out_dir)
+            else:
+                log(f"== build {recipe}")
+                build(root, recipe, environ)
+                check_outputs(group[0].checked, out_dir)
         except Exception as error:  # noqa: BLE001 - every failure reaches the summary
             for item in group:
                 item.fail("failed", describe(error))
@@ -987,10 +1040,56 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
     return status
 
 
+def never_moves(item):
+    """Why a tag that holds another digest is the end of the road."""
+    if item.artifact.kind == "firmware":
+        return "a package revision never moves"
+    return "a media tag never moves"
+
+
+def check_published(host, item, registry):
+    """--skip-published: the anonymous read of the item's own tag (on
+    unemu/media/ or unemu/firmware/, whatever the target). The same digest
+    as the pin makes it `published`, another digest `refused`; a missing tag
+    leaves it to be built. The row then names the tag that was read. An item
+    without a pin is not read: nothing to compare it with."""
+    pinned = item.artifact.digest
+    if pinned is None:
+        return
+    repository, tag = item.artifact.repository, item.artifact.tag
+    try:
+        current = registry(host, repository, tag)
+    except Exception as error:  # noqa: BLE001 - every failure reaches the summary
+        item.fail("failed", f"reading {repository}:{tag} on {host}: {describe(error)}")
+        return
+    if current is None:
+        log(f"{item.ref}: not on {host} yet")
+        return
+    item.repository, item.tag, item.digest = repository, tag, current
+    if current == pinned:
+        item.outcome = "published"
+        log(f"{item.ref}: {host} serves the pinned {pinned}: published, not built or pushed")
+        return
+    other = "a new tag (-rN)" if item.artifact.kind == "media" else "the next revision"
+    item.fail("refused", f"{host} already serves {current} under this tag, the manifest pins {pinned}; "
+                         f"{never_moves(item)}: give it {other}")
+
+
+def existing_outputs(recipe, checked, out_dir):
+    """--no-build: every pinned output is already in OUT_DIR with its hash
+    (check_outputs), or a Failure that says how to get them there."""
+    try:
+        check_outputs(checked, out_dir)
+    except Failure as failure:
+        raise Failure(f"--no-build: {failure}; build the recipe first (bash recipes/{recipe}/build.sh, "
+                      "or this pipeline without --no-build)") from None
+
+
 def push_all(cli, host, items, store, config, env, registry, environ):
     """Push every set and package, after an anonymous read of its target,
     when every one passed and is pinned; stop at the first refusal or
-    failure. 1 unless every one ends on the registry."""
+    failure. 1 unless every one ends on the registry. A `published` one is
+    already there and is left alone."""
     if any(item.failed or item.outcome == "unpinned" for item in items):
         for item in items:
             if item.outcome == "dry run":
@@ -1002,6 +1101,8 @@ def push_all(cli, host, items, store, config, env, registry, environ):
     secrets[HOST_ENV] = host
     status = 0
     for item in items:
+        if item.outcome == "published":
+            continue
         if status:
             item.outcome, item.detail = "held", "not pushed: an earlier push failed"
             continue
@@ -1023,9 +1124,7 @@ def push_one(cli, host, item, target, store, config, secrets, registry):
             item.outcome = "present"
             return
         if current is not None:
-            item.fail("refused", f"the registry already holds {current} under this tag; "
-                                 f"a {'package revision' if item.artifact.kind == 'firmware' else 'media tag'} "
-                                 "never moves")
+            item.fail("refused", f"the registry already holds {current} under this tag; {never_moves(item)}")
             return
         word, digest = push_artifact(cli, item, target, store, config, secrets)
     except Exception as error:  # noqa: BLE001 - every failure reaches the summary
