@@ -14,9 +14,10 @@ rules behind them (upstream bytes, licences, sources) are in
 - one manifest, which pins every output and the digest of every set or
   package. Its file name says its kind:
   - `media.toml`: the installation media sets the release feeds, published
-    as `unemu/media/<work>:<tag>`;
+    as `unemu/media/ibm-pc/<work>:<release>-rN` with the release alias
+    `<release>`;
   - `firmware.toml`: one firmware package, published as
-    `unemu/firmware/<catalogue id>:<revision>`;
+    `unemu/firmware/ibm-pc/<catalogue id>:rN`;
 - any helper files the build needs (the FreeDOS recipe has an ISO 9660
   reader and its licence index).
 
@@ -34,6 +35,15 @@ What the outputs are:
   release assets of the ROM's own project, installed unmodified. No recipe
   builds firmware from source.
 
+Every disk, extra, ROM and source archive becomes a layer whose export file
+name (`org.opencontainers.image.title`) is its file name, so upcli refuses
+an import with a file name that macOS, Linux or Windows would not take as
+it is (a control character, one of `/ \ : * ? " < > |`, a trailing space
+or dot, a device name such as `CON.img`, more than 251 bytes), a name the
+export writes itself (`config.toml`, `metadata.json`, `manifest.json`,
+`SHA256SUMS`, `EXPORT-VERSION`, and a package's `README.md`), or two files
+of one set or package whose names differ only in case.
+
 ## Where files go
 
 | Directory | What | Committed |
@@ -47,12 +57,12 @@ stops at once, without the network.
 
 ## Set manifests (media.toml)
 
-Every set of a manifest is one work, `unemu/media/<work>`, under its own
-tag. Output paths are relative to `out/<recipe>/`.
+Every set of a manifest is one work, `unemu/media/ibm-pc/<work>`, under its
+own tag. Output paths are relative to `out/<recipe>/`.
 
 | Table and key | Meaning |
 | --- | --- |
-| `[release]` `work` | the repository name under `unemu/media/`: a short, stable, lower-case slug |
+| `[release]` `work` | the repository name under `unemu/media/ibm-pc/`: a short, stable, lower-case slug; upcli also gives it to the set's title record as its id |
 | `version` | the upstream version, lower case, no `-` |
 | `default_format` | the release's own format (`1.44M` for an archive without disks) |
 | `edition_slug`, `edition` | optional: the edition in the tag, and as the title states it |
@@ -65,23 +75,34 @@ tag. Output paths are relative to `out/<recipe>/`.
 | `terms` | the extra holding the licence text |
 | `source` | the extra holding the corresponding source; required unless `license` is one `LicenseRef-` |
 | `[[release.extra]]` | `path`, `sha256`, `dos_name` (DOS 8.3), `kind` (`document`, `archive`, `executable` or `other`) |
-| `[[set]]` | `title`, `description`, `format` (`1.44M`, `1.2M`, `720K`, `360K` or `iso-2048`), optional `revision` (from 1) and `digest` (`sha256:...`, the set digest the pinned upcli gives) |
+| `[[set]]` | `title`, `description`, `format` (`1.44M`, `1.2M`, `720K`, `360K` or `iso-2048`), optional `revision` (from 1, the default) and `digest` (`sha256:...`, the set digest the pinned upcli gives) |
 | `[[set.disk]]` | `path`, `sha256`, `label`; in installer order |
 
-The tag is derived, never written: `VERSION[-EDITION_SLUG][-FORMAT][-rN]`,
-the format only when it is not the default one (`1.44m`, `1.2m`, `720k`,
-`360k`, `iso`), `-rN` only from revision 2. FreeDOS 1.4 gives `1.4`,
-`1.4-1.2m` and `1.4-720k`.
+The tag is derived, never written, in unemupc's tag grammar (its
+decision-38): `RELEASE-rN`, where the release is
+`VERSION[-EDITION_SLUG][-FORMAT]`, the format only when it is not the
+default one (`1.44m`, `1.2m`, `720k`, `360k`, `iso`), and `N` the revision.
+FreeDOS 1.4 gives `1.4-r1`, `1.4-1.2m-r1` and `1.4-720k-r1`. A tag that
+ends in `rN` never moves. The release alone (`1.4`) is an alias that names
+its newest revision: the pipeline pushes it after the revision. Once moving
+a set's alias to a newer revision is supported, a corrected set, metadata
+included, is the next revision (`revision = 2`, `1.4-r2`), which replaces
+the old set in its manifest while the old revision's tag stays on the
+registry. Until then the maintainer decides; before unemupc's first public
+release no further revision is published at all. A release names one set,
+so the check refuses two sets, in one manifest or across manifests, with
+one release.
 
 ## Package manifests (firmware.toml)
 
-One package of unemupc's firmware catalogue, `unemu/firmware/<catalogue
-id>`, as unemupc's own template build states it.
+One package of unemupc's firmware catalogue,
+`unemu/firmware/ibm-pc/<catalogue id>`, as unemupc's own template build
+states it.
 
 | Table and key | Meaning |
 | --- | --- |
 | `[package]` `catalogue_id` | the catalogue entry the ROM is; also the repository name |
-| `revision` | the tag: a whole number from 1, raised only when the statement or metadata changes for the same ROM |
+| `revision` | a whole number from 1, raised only when the statement or metadata changes for the same ROM; the tag is `rN` (`r1`), which names no release and has no alias |
 | `digest` | optional: `sha256:...`, the package digest the pinned upcli gives |
 | `title`, `vendor`, `version` | 1 to 128 characters each |
 | `description` | one line, up to 4096 characters |

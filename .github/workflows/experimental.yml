@@ -2,9 +2,11 @@
 #
 # Every push to main: the recipes it touches (lib/changed.py), built and
 # checked, and their sets and packages pushed to
-# <host>/unemu/experimental/<kind>/<name>:<tag>.ci<run id>, for testing
-# before publication. What unemu/media/ or unemu/firmware/ already serves
-# under its own tag is skipped: never rebuilt, never pushed again. Two jobs:
+# <host>/unemu/experimental/<kind>/ibm-pc/<name>:<release>-ci<run id>-rN
+# (a set with its alias <release>-ci<run id>, a package as ci<run id>-rN),
+# for testing before publication. What unemu/media/ or unemu/firmware/
+# already serves under its own tag (and a set's alias) is skipped: never
+# rebuilt, never pushed again. Two jobs:
 # the recipes run in the build job, which has no environment and no secret;
 # the push job, on a fresh runner with the credentials, runs no recipe code
 # and takes the outputs as an artifact, checked against their pins. See

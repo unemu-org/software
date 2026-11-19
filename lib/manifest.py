@@ -4,16 +4,17 @@
     python3 -I lib/manifest.py check MANIFEST   validate; exit 1 on a refusal;
                                                 warnings on stderr
     python3 -I lib/manifest.py pins MANIFEST    "PATH SHA256" per pinned output
-    python3 -I lib/manifest.py refs MANIFEST... every unemu/media/<work>:<tag>
-                                                and unemu/firmware/<id>:
-                                                <revision>; exit 1 if two of
-                                                the manifests share one
+    python3 -I lib/manifest.py refs MANIFEST... every unemu/media/ibm-pc/<work>:
+                                                <release>-rN and unemu/firmware/
+                                                ibm-pc/<id>:rN; exit 1 if two
+                                                of the manifests share one, or
+                                                a release alias
     python3 -I lib/manifest.py sets MANIFEST OUT_DIR
                                                 every set or package as JSON:
-                                                its kind, ref, store tag,
-                                                licence, digest pin and the
-                                                upcli import arguments, the
-                                                outputs found in OUT_DIR
+                                                its kind, ref, alias, store
+                                                tag, licence, digest pin and
+                                                the upcli import arguments,
+                                                the outputs found in OUT_DIR
 
 A recipe has one manifest of one of two kinds: a set manifest (media.toml)
 for installation media sets, or a package manifest (firmware.toml) for one
@@ -26,11 +27,13 @@ set a recipe feeds, as unemupc98's `image media import` takes them
 (media_import::Request and OpenStatement, built as its template code builds
 them: MediaRelease, MediaSource and media_request in
 crates/pc-image/src/template.rs). Every set of a manifest is one work, the
-repository unemu/media/<work>, each under its own derived tag.
+repository unemu/media/ibm-pc/<work> (the machine platform, upcli's ibm-pc,
+is the path's second component), each under its own derived tag.
 
     [release]                 what every set of the release shares
-    work                      the repository name under unemu/media/: a short,
-                              stable, lower-case slug
+    work                      the repository name under unemu/media/ibm-pc/:
+                              a short, stable, lower-case slug; upcli also
+                              gives it to the set's title record as its id
     version                   the upstream release version (1.4), lower case,
                               no '-'
     default_format            the upstream release's own format (an archive
@@ -60,22 +63,29 @@ repository unemu/media/<work>, each under its own derived tag.
 
     [[set]]                   title (the work's title only), description,
                               format (1.44M, 1.2M, 720K, 360K or iso-2048),
-                              revision (optional, from 1: a corrected set),
+                              revision (optional, from 1: our packaging of
+                              the release; a correction takes the next once
+                              the pipeline can move the alias to it, and
+                              until then the maintainer decides),
                               digest (optional, "sha256:<64 hex>": the set
                               digest the pinned upcli gives; lib/publish.py
                               refuses another and never pushes a set
                               without one)
     [[set.disk]]              path, sha256, label; in installer order
 
-The tag is derived, never written: VERSION[-EDITION_SLUG][-FORMAT][-rN], the
-format only when it is not the default format, -rN only from revision 2.
-Paths are relative to out/<recipe>/. The output pins live only here, so the
-recipe's fast path, its install step and the import read one source of
-truth.
+The tag is derived, never written: RELEASE-rN, in the tag grammar of
+unemupc's decision-38 (image_store::tag), where RELEASE is
+VERSION[-EDITION_SLUG][-FORMAT], the format only when it is not the default
+format, and N the revision. A tag that ends in rN never moves; the release
+alone is the alias of its newest revision, which the pipeline pushes after
+it. A release names one set: a new revision replaces the old set in its
+manifest (the old revision's tag stays on the registry). Paths are relative
+to out/<recipe>/. The output pins live only here, so the recipe's fast path,
+its install step and the import read one source of truth.
 
 Firmware packages. A package manifest (recipes/<recipe>/firmware.toml)
 describes one open firmware package of unemupc's firmware catalogue, the
-repository unemu/firmware/<catalogue id>, as unemupc's `image firmware
+repository unemu/firmware/ibm-pc/<catalogue id>, as unemupc's `image firmware
 import --for` takes it (firmware_import::Statement, built as its template
 build builds it: FirmwareSource::statement in
 crates/pc-image/src/template.rs):
@@ -83,10 +93,12 @@ crates/pc-image/src/template.rs):
     [package]
     catalogue_id              the catalogue entry the ROM is (unemupc
                               crates/assembly/src/firmware.rs); also the
-                              repository name under unemu/firmware/
-    revision                  the package revision, the registry tag: a whole
-                              number from 1, raised only when the statement
-                              or the metadata changes for the same ROM bytes
+                              repository name under unemu/firmware/ibm-pc/
+    revision                  the package revision, a whole number from 1,
+                              raised only when the statement or the metadata
+                              changes for the same ROM bytes; the registry
+                              tag is rN, which names no release and so has
+                              no alias
     digest                    optional, "sha256:<64 hex>": the package digest
                               the pinned upcli gives; lib/publish.py refuses
                               another and never pushes a package without one
@@ -102,10 +114,11 @@ crates/pc-image/src/template.rs):
     [source]                  path (a .tar or .zip), sha256: its corresponding
                               source archive, the one the catalogue pins
 
-The ref is unemu/firmware/<catalogue id>:<revision>. upcli tags an imported
-package firmware/<catalogue id>:1 in its store, whatever the revision, so a
-catalogue id has one manifest: a new revision replaces the old one in it
-(the old revision's tag stays on the registry and never moves).
+The ref is unemu/firmware/ibm-pc/<catalogue id>:rN. upcli tags an imported
+package private/firmware/ibm-pc/<catalogue id>:r1 in its store, whatever
+the revision, so a catalogue id has one manifest: a new revision replaces
+the old one in it (the old revision's tag stays on the registry and never
+moves).
 
 Standard library only (tomllib, Python 3.11 or later). Run it with -I, so no
 PYTHON* variable, user site directory or file next to this one changes what
@@ -119,15 +132,19 @@ import re
 import sys
 import tomllib
 
-NAMESPACE = "unemu/media"
-FIRMWARE_NAMESPACE = "unemu/firmware"
+# The machine platform of every set and package here, upcli's platform id
+# since unemupc 0.0.3 (decision-32; ibm-pc-at is its read-only alias): the
+# second component of every repository (decision-35).
+PLATFORM = "ibm-pc"
+NAMESPACE = f"unemu/media/{PLATFORM}"
+FIRMWARE_NAMESPACE = f"unemu/firmware/{PLATFORM}"
 # A manifest's kind, by its file name; and the top-level tables of each kind.
 MANIFEST_NAMES = {"media.toml": "media", "firmware.toml": "firmware"}
 SET_TABLES = ("release", "set")
 PACKAGE_TABLES = ("package", "rom", "source")
-# The store tag `upcli image firmware import` gives a package
-# (firmware_import::Candidate::tag): always revision 1.
-FIRMWARE_STORE_TAG = "firmware/{}:1"
+# The store tag `upcli image firmware import --for` gives a package: a local
+# import's, under private/, and always the first revision, r1.
+FIRMWARE_STORE_TAG = f"private/firmware/{PLATFORM}/{{}}:r1"
 # A firmware label, as image_store::media_set::valid_id takes one.
 FIRMWARE_LABEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 MAX_FIRMWARE_LABELS = 64
@@ -173,6 +190,14 @@ MAX_REPOSITORY = 255
 VERSION = re.compile(r"[0-9](?:[0-9a-z.]*[0-9a-z])?")
 EDITION_SLUG = re.compile(r"[a-z][a-z0-9]*")
 REVISION_LIKE = re.compile(r"r[0-9]+")
+# The tag grammar of sets and packages (unemupc decision-38,
+# image_store::tag): a tag is [<release>-]r<N>, N from 1 without a leading
+# zero; a release is parts joined by '-', each of lower-case letters and
+# digits joined by '.' or '_', none of them 'r' and digits only. A tag that
+# ends in rN never moves; the release alone is an alias that names its
+# newest revision.
+RELEASE_PART = re.compile(r"[a-z0-9]+(?:[._][a-z0-9]+)*")
+REVISION = re.compile(r"r[1-9][0-9]*")
 # unemupc98 image_store::store, a local tag: at most 128 bytes.
 TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 # A path component: letters, digits or '_' first (so no ".", "..", hidden
@@ -245,6 +270,8 @@ class Disk:
 @dataclasses.dataclass(frozen=True)
 class MediaSet:
     tag: str
+    # The release the tag names: the alias of its newest revision.
+    alias: str
     title: str
     description: str
     format: str
@@ -363,7 +390,12 @@ class Package:
 
     @property
     def tag(self):
-        return str(self.revision)
+        return f"r{self.revision}"
+
+    @property
+    def alias(self):
+        """None: a package's tag names no release, so it has no alias."""
+        return None
 
     @property
     def store_tag(self):
@@ -381,14 +413,16 @@ class FirmwareManifest:
 @dataclasses.dataclass(frozen=True)
 class Artifact:
     """One set or package as the pipeline handles it: its kind ("media" or
-    "firmware"), its ref (repository:tag), the tag upcli's import writes in
-    the store, the licence expression, the digest pin (or None) and the
-    upcli import arguments (without --store and --create)."""
+    "firmware"), its ref (repository:tag), its alias (a set's release, None
+    for a package), the tag upcli's import writes in the store, the licence
+    expression, the digest pin (or None) and the upcli import arguments
+    (without --store and --create)."""
 
     kind: str
     ref: str
     repository: str
     tag: str
+    alias: str | None
     store_tag: str
     license: str
     digest: str | None
@@ -819,17 +853,40 @@ def parse_release(value, warnings):
     )
 
 
-def derived_tag(release, media_format, revision):
-    """VERSION[-EDITION_SLUG][-FORMAT][-rN]: the format only when it is not
-    the release's own, the revision only from 2."""
+def valid_release(release):
+    """Whether RELEASE is a release of the tag grammar: parts joined by '-',
+    none of them 'r' and digits only."""
+    return bool(release) and all(
+        RELEASE_PART.fullmatch(part) and not REVISION_LIKE.fullmatch(part) for part in release.split("-")
+    )
+
+
+def parse_revision(tag):
+    """(release, N) when TAG is a revision tag of the grammar, as
+    image_store::tag::parse reads one; release is None for a bare rN, which
+    has no alias. None for any other tag, an alias among them."""
+    if REVISION.fullmatch(tag):
+        return None, int(tag[1:])
+    release, dash, last = tag.rpartition("-")
+    if dash and REVISION.fullmatch(last) and valid_release(release):
+        return release, int(last[1:])
+    return None
+
+
+def derived_release(release, media_format):
+    """VERSION[-EDITION_SLUG][-FORMAT], the release a set's tag names and
+    so its alias: the format only when it is not the release's own."""
     parts = [release.version]
     if release.edition_slug is not None:
         parts.append(release.edition_slug)
     if media_format != release.default_format:
         parts.append(FORMAT_SLUGS[media_format])
-    if revision >= 2:
-        parts.append(f"r{revision}")
     return "-".join(parts)
+
+
+def derived_tag(release, media_format, revision):
+    """RELEASE-rN: the set's release (derived_release) and its revision."""
+    return f"{derived_release(release, media_format)}-r{revision}"
 
 
 def parse_set(value, where, release, warnings):
@@ -843,9 +900,10 @@ def parse_set(value, where, release, warnings):
         digest = string(value["digest"], f"{where}.digest")
         if not DIGEST.fullmatch(digest):
             raise Refusal(f"{where}.digest: expected 'sha256:' and 64 lowercase hexadecimal digits")
+    alias = derived_release(release, media_format)
     tag = derived_tag(release, media_format, revision)
-    if not TAG.fullmatch(tag):
-        raise Refusal(f"{where}: the derived tag {tag!r} is not a valid tag (at most 128 bytes)")
+    if not TAG.fullmatch(tag) or parse_revision(tag) != (alias, revision):
+        raise Refusal(f"{where}: the derived tag {tag!r} is not a valid revision tag (at most 128 bytes)")
     title = text(value["title"], f"{where}.title")
     if whole_word(release.version, title):
         warnings.append(f"{where}.title: {title!r} holds the version {release.version!r}; the title is the work's only")
@@ -864,6 +922,7 @@ def parse_set(value, where, release, warnings):
         )
     return MediaSet(
         tag=tag,
+        alias=alias,
         title=title,
         description=long_text(value["description"], f"{where}.description"),
         format=media_format,
@@ -889,6 +948,14 @@ def validate(data):
                 f"set[{i}]: the derived tag {media_set.tag!r} is also set[{seen[media_set.tag]}]'s"
             )
         seen[media_set.tag] = i
+    releases = {}
+    for i, media_set in enumerate(sets, 1):
+        if media_set.alias in releases:
+            raise Refusal(
+                f"set[{i}]: the release {media_set.alias!r} is also set[{releases[media_set.alias]}]'s; "
+                "its alias names one set: a new revision replaces the old set in the manifest"
+            )
+        releases[media_set.alias] = i
     manifest = Manifest(release, sets, tuple(warnings))
     pinned = {}
     folded = {}
@@ -1132,9 +1199,10 @@ def firmware_import_arguments(manifest, out_dir):
     and the package is open because the source archive is the one the
     catalogue pins. --open --license states the same licence explicitly
     (firmware_import::rom_license), so the package digest is the template
-    build's (measured at unemupc 3634f02 for every package here; the
-    upcli of the 0.0.2 release gives the same digests), and upcli
-    refuses a licence other than the catalogue's. lib/publish.py also
+    build's (measured at unemupc 3634f02 for every package here; the upcli
+    of the 0.0.3 release gives the digests unemupc's
+    crates/pc-image/tests/template.rs pins for its template build), and
+    upcli refuses a licence other than the catalogue's. lib/publish.py also
     checks the licence the package states against the manifest's."""
     package = manifest.package
 
@@ -1160,6 +1228,7 @@ def artifacts(manifest, out_dir):
             ref=f"{package.repository}:{package.tag}",
             repository=package.repository,
             tag=package.tag,
+            alias=package.alias,
             store_tag=package.store_tag,
             license=package.license,
             digest=package.digest,
@@ -1174,6 +1243,7 @@ def artifacts(manifest, out_dir):
             ref=request.tag,
             repository=manifest.release.repository,
             tag=media_set.tag,
+            alias=media_set.alias,
             store_tag=request.tag,
             license=statement.license,
             digest=media_set.digest,
@@ -1184,15 +1254,17 @@ def artifacts(manifest, out_dir):
 
 def describe(manifest, out_dir):
     """Every set or package of MANIFEST as `sets` prints it: its kind, ref,
-    repository and tag, the tag the import writes in the store, the licence
-    expression, the digest pin (None without one) and the import arguments,
-    with the outputs' paths joined to OUT_DIR."""
+    repository, tag and alias (None for a package), the tag the import
+    writes in the store, the licence expression, the digest pin (None
+    without one) and the import arguments, with the outputs' paths joined to
+    OUT_DIR."""
     return [
         {
             "kind": artifact.kind,
             "ref": artifact.ref,
             "repository": artifact.repository,
             "tag": artifact.tag,
+            "alias": artifact.alias,
             "store_tag": artifact.store_tag,
             "license": artifact.license,
             "digest": artifact.digest,
@@ -1204,28 +1276,36 @@ def describe(manifest, out_dir):
 
 def refs(manifests):
     """Every reference across MANIFESTS (pairs of a name and a checked
-    manifest), in order: each set's unemu/media/<work>:<tag> and each
-    package's unemu/firmware/<catalogue id>:<revision>. A Refusal when two
-    of them share one, as two manifests for one work can (another default
-    format, for one), since a published tag never moves; and when two
-    package manifests name one catalogue id, since upcli imports both under
-    one store tag."""
+    manifest), in order: each set's unemu/media/ibm-pc/<work>:<release>-rN
+    and each package's unemu/firmware/ibm-pc/<catalogue id>:rN. A Refusal
+    when two of them share one, as two manifests for one work can (another
+    default format, for one), since a published tag never moves; when two
+    sets share a release alias, which names one set; and when two package
+    manifests name one catalogue id, since upcli imports both under one
+    store tag."""
     seen = {}
+    aliases = {}
     packages = {}
     result = []
     for name, checked in manifests:
         if isinstance(checked, FirmwareManifest):
             package = checked.package
-            entries = [(f"{name}: package", f"{package.repository}:{package.tag}")]
+            entries = [(f"{name}: package", f"{package.repository}:{package.tag}", None)]
         else:
+            repository = checked.release.repository
             entries = [
-                (f"{name}: set[{i}]", f"{checked.release.repository}:{media_set.tag}")
+                (f"{name}: set[{i}]", f"{repository}:{media_set.tag}", f"{repository}:{media_set.alias}")
                 for i, media_set in enumerate(checked.sets, 1)
             ]
-        for where, ref in entries:
+        for where, ref, alias in entries:
             if ref in seen:
                 raise Refusal(f"{where}: {ref} is also {seen[ref]}")
+            if alias in aliases:
+                raise Refusal(f"{where}: the release alias {alias} of {ref} is also {aliases[alias]}'s; "
+                              "a new revision replaces the old set in its manifest")
             seen[ref] = where
+            if alias is not None:
+                aliases[alias] = where
             result.append(ref)
         if isinstance(checked, FirmwareManifest):
             if package.catalogue_id in packages:

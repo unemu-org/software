@@ -3,9 +3,10 @@
 #
 # The XTIDE Universal BIOS r638 XT+ build configured for 16-bit ATA at 1F0h,
 # release r638-unemu.1 of github.com/unemu-org/xtide-universal-bios, for the
-# firmware package of firmware.toml: unemu/firmware/xub-r638-xtp-ata1f0. The
-# fork's own release workflow builds r638 with the fork's Nix flake,
-# configures, pads and checksums the ROM, and attaches it to the release with
+# firmware package of firmware.toml:
+# unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1. The fork's own release
+# workflow builds r638 with the fork's Nix flake, configures, pads and
+# checksums the ROM, and attaches it to the release with
 # the r638 source archive; this recipe downloads those two assets, and no
 # other, and installs them unmodified. It builds and transforms nothing (bd
 # memory 'firmware-rules', rule (a); the transformation exception, rule (b),

@@ -7,9 +7,9 @@ Repo-specific notes for coding agents. Generic software-engineering advice is ou
 Reproducible build recipes for the **open installation media sets** of the unemu
 family: freely redistributable DOS (and later Windows-era) software as floppy or CD
 sets, built from pinned upstream releases with their licences, corresponding source
-archives and documentation, and published as OCI media sets to `unemu/media/` on
-the family's registry. The repository also builds the **open firmware packages**
-of unemupc's machine templates, published to `unemu/firmware/<catalogue id>`: each
+archives and documentation, and published as OCI media sets to `unemu/media/ibm-pc/`
+on the family's registry. The repository also builds the **open firmware packages**
+of unemupc's machine templates, published to `unemu/firmware/ibm-pc/<catalogue id>`: each
 ROM and its source archive come from the release assets of the unemu-org forks,
 pinned and unmodified. The consumer is **unemupc** (an IBM PC/AT-class emulator;
 CLI `upcli`, beads prefix `upc`), whose `image media import` and `image firmware

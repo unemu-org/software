@@ -2,8 +2,9 @@
 # tests/manifest_test.py). It is no real release and nothing is ever
 # published from it. Its outputs are the files the self-test builds from its
 # own fixtures, and its pins are theirs: a change in the bytes the helpers
-# write shows up as a mismatch. Its sets would be unemu/media/example:1.0
-# (the release's own 1.44M format) and unemu/media/example:1.0-720k.
+# write shows up as a mismatch. Its sets would be
+# unemu/media/ibm-pc/example:1.0-r1 (the release's own 1.44M format) and
+# unemu/media/ibm-pc/example:1.0-720k-r1.
 
 [release]
 work = "example"

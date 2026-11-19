@@ -3,9 +3,10 @@
 #
 # The unemu VGA BIOS, release v0.9d-unemu.1 of github.com/unemu-org/vgabios
 # (the unemu fork of the LGPL VGABIOS 0.9d), standard VGA build, for the
-# firmware package of firmware.toml: unemu/firmware/vgabios-0.9d-unemu.1-std.
-# The fork's own release workflow builds the ROM and its source archive with
-# the fork's Nix flake and attaches both to the release; this recipe
+# firmware package of firmware.toml:
+# unemu/firmware/ibm-pc/vgabios-0.9d-unemu.1-std:r1. The fork's own release
+# workflow builds the ROM and its source archive with the fork's Nix flake
+# and attaches both to the release; this recipe
 # downloads those two assets, and no other, and installs them unmodified. It
 # builds nothing from source (bd memory 'firmware-rules', rule (a)).
 #

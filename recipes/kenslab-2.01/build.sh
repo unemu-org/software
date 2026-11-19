@@ -3,10 +3,10 @@
 #
 # Ken's Labyrinth 2.01, the full version (the Epic MegaGames registered
 # version of 1993), which Ken Silverman released as freeware on 1999-11-16,
-# for the set of media.toml: unemu/media/kenslab:2.01. The upstream release
-# is an archive without disks, LABFULL.ZIP from the author's official Ken's
-# Labyrinth page (https://advsys.net/ken/klab.htm); the set's one 1.44M
-# diskette holds its files as released. The version is the one the game
+# for the set of media.toml: unemu/media/ibm-pc/kenslab:2.01-r1. The
+# upstream release is an archive without disks, LABFULL.ZIP from the
+# author's official Ken's Labyrinth page (https://advsys.net/ken/klab.htm);
+# the set's one 1.44M diskette holds its files as released. The version is the one the game
 # displays, V2.01 on its title art (the author's LAB21F.PNG, "from
 # LABFULL.ZIP"); the author's page names the archive v2.1, but the program's
 # own display wins.

@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Publication to <host>/unemu/media/ and <host>/unemu/firmware/, started by
-# hand. Only the sets and packages whose own tag is not on the registry yet
-# are built and pushed; everything already published is skipped, never
-# rebuilt or pushed again. Two jobs: the recipes run in the build job, which
+# hand. Only the sets and packages whose own tag (or a set's release alias)
+# is not on the registry yet are built and pushed; everything already
+# published is skipped, never rebuilt or pushed again. Two jobs: the recipes
+# run in the build job, which
 # has no environment and no secret, and its dry-run table is in the run's
 # summary before the maintainer approves the push job (environment media).
 # The push job, on a fresh runner with the credentials, runs no recipe code,
@@ -17,8 +18,9 @@ on:
     inputs:
       select:
         description: >-
-          Recipes or refs to publish, separated by spaces (unemu/media/<work>:<tag>,
-          unemu/firmware/<id>:<revision>); empty: every recipe. Published ones are skipped.
+          Recipes or refs to publish, separated by spaces (unemu/media/ibm-pc/<work>:<release>-rN,
+          which pushes its alias <release> too, unemu/firmware/ibm-pc/<id>:rN); empty: every
+          recipe. Published ones are skipped.
         type: string
         required: false
         default: ""

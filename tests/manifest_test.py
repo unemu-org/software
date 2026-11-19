@@ -77,8 +77,9 @@ def shareware(data):
 class Accepted(unittest.TestCase):
     def test_example_manifest(self):
         checked = manifest.load(EXAMPLE)
-        self.assertEqual(checked.release.repository, "unemu/media/example")
-        self.assertEqual([s.tag for s in checked.sets], ["1.0", "1.0-720k"])
+        self.assertEqual(checked.release.repository, "unemu/media/ibm-pc/example")
+        self.assertEqual([s.tag for s in checked.sets], ["1.0-r1", "1.0-720k-r1"])
+        self.assertEqual([s.alias for s in checked.sets], ["1.0", "1.0-720k"])
         self.assertEqual(checked.warnings, ())
         self.assertEqual(checked.release.series, "Example Series")
         self.assertEqual(checked.release.sort_title, "Example")
@@ -92,8 +93,8 @@ class Accepted(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertIn("ok, 2 sets, 2 disks, 2 extras", result.stdout)
-        self.assertIn("  unemu/media/example:1.0\n", result.stdout)
-        self.assertIn("  unemu/media/example:1.0-720k\n", result.stdout)
+        self.assertIn("  unemu/media/ibm-pc/example:1.0-r1\n", result.stdout)
+        self.assertIn("  unemu/media/ibm-pc/example:1.0-720k-r1\n", result.stdout)
         result = run("pins", str(EXAMPLE))
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
@@ -108,31 +109,50 @@ class Accepted(unittest.TestCase):
 
         def edition(d):
             d["release"]["edition_slug"] = "livecd"
-        self.assertEqual(tags(edition), ["1.0-livecd", "1.0-livecd-720k"])
+        self.assertEqual(tags(edition), ["1.0-livecd-r1", "1.0-livecd-720k-r1"])
 
         def revision(d):
             d["set"][1]["revision"] = 2
             d["set"][0]["revision"] = 1
-        self.assertEqual(tags(revision), ["1.0", "1.0-720k-r2"])
+        self.assertEqual(tags(revision), ["1.0-r1", "1.0-720k-r2"])
 
         def both(d):
             d["release"]["edition_slug"] = "cd"
             d["set"][0]["revision"] = 3
-        self.assertEqual(tags(both), ["1.0-cd-r3", "1.0-cd-720k"])
+        self.assertEqual(tags(both), ["1.0-cd-r3", "1.0-cd-720k-r1"])
 
         def other_default(d):
             d["release"]["default_format"] = "720K"
-        self.assertEqual(tags(other_default), ["1.0-1.44m", "1.0"])
+        self.assertEqual(tags(other_default), ["1.0-1.44m-r1", "1.0-r1"])
 
         def every_format(d):
             d["release"]["default_format"] = "360K"
             d["set"] = [dict(d["set"][0], format=f, disk=[{"path": f"d{i}.img", "sha256": HASH, "label": "Disk 1"}])
                         for i, f in enumerate(("1.44M", "1.2M", "720K", "360K", "iso-2048"))]
-        self.assertEqual(tags(every_format), ["1.0-1.44m", "1.0-1.2m", "1.0-720k", "1.0", "1.0-iso"])
+        self.assertEqual(tags(every_format), ["1.0-1.44m-r1", "1.0-1.2m-r1", "1.0-720k-r1", "1.0-r1", "1.0-iso-r1"])
+        # The alias of each set is its release: the tag without its revision.
+        self.assertEqual([s.alias for s in manifest.validate(changed(every_format)).sets],
+                         ["1.0-1.44m", "1.0-1.2m", "1.0-720k", "1.0", "1.0-iso"])
 
         def letters(d):
             d["release"]["version"] = "1.0a"
-        self.assertEqual(tags(letters), ["1.0a", "1.0a-720k"])
+        self.assertEqual(tags(letters), ["1.0a-r1", "1.0a-720k-r1"])
+
+    def test_the_tag_grammar(self):
+        # unemupc's image_store::tag: what reads as a revision tag, and its
+        # release (None for a bare rN).
+        for tag, parsed in (("r1", (None, 1)), ("r12", (None, 12)), ("1.4-r1", ("1.4", 1)),
+                            ("1.4-720k-r2", ("1.4-720k", 2)), ("usa-rev1-r1", ("usa-rev1", 1)),
+                            ("3.0-1.2m-r10", ("3.0-1.2m", 10)), ("1.4_beta.2-r3", ("1.4_beta.2", 3)),
+                            ("1.4-ci42-r1", ("1.4-ci42", 1)), ("ci42-r1", ("ci42", 1))):
+            self.assertEqual(manifest.parse_revision(tag), parsed, tag)
+        # Aliases and tags outside the scheme.
+        for tag in ("1.4", "1.4-720k", "latest", "1", "r", "r2d2", "rev1", "", "r0", "r01", "1.4-r0",
+                    "1.4-r01", "r1-r2", "1.4-r1-r2", "1.4-", "-r1", "1..4-r1", "1.4.-r1", "_1-r1",
+                    "V1.4-r1", "1.4-RC1-r1", "1.4+b-r1", "a--b-r1", "1.4-r1.ci42", "r1.ci42"):
+            self.assertIsNone(manifest.parse_revision(tag), tag)
+        self.assertFalse(manifest.valid_release("1.4-r2"))
+        self.assertTrue(manifest.valid_release("1.4-rev2"))
 
     def test_shareware_shape(self):
         # One LicenseRef- for the vendor's own terms needs no source archive,
@@ -188,8 +208,8 @@ class Accepted(unittest.TestCase):
 
     def test_import_request(self):
         checked = manifest.load(EXAMPLE)
-        request = manifest.import_request(checked, "1.0-720k", "out/example")
-        self.assertEqual(request.tag, "unemu/media/example:1.0-720k")
+        request = manifest.import_request(checked, "1.0-720k-r1", "out/example")
+        self.assertEqual(request.tag, "unemu/media/ibm-pc/example:1.0-720k-r1")
         self.assertEqual(request.title.title, "Example")
         self.assertEqual(request.title.publishers, ("Example Publisher",))
         self.assertEqual(request.title.developers, ("Example Developer",))
@@ -212,13 +232,15 @@ class Accepted(unittest.TestCase):
             ),
         )
         self.assertTrue(request.compress)
-        self.assertEqual(manifest.import_request(checked, "1.0", "out").tag, "unemu/media/example:1.0")
+        self.assertEqual(manifest.import_request(checked, "1.0-r1", "out").tag, "unemu/media/ibm-pc/example:1.0-r1")
         self.assertEqual(
             manifest.open_statement(checked),
             manifest.OpenStatement("GPL-2.0-or-later", "LICENSE.TXT", "example-src.tar"),
         )
-        with self.assertRaises(manifest.Refusal):
-            manifest.import_request(checked, "1.0-1.2m", "out/example")
+        # Another release, or an alias, names no set to import.
+        for tag in ("1.0-1.2m-r1", "1.0", "1.0-r2"):
+            with self.assertRaises(manifest.Refusal):
+                manifest.import_request(checked, tag, "out/example")
 
     def test_digest_pin(self):
         pin = "sha256:" + "0123456789abcdef" * 4
@@ -228,12 +250,12 @@ class Accepted(unittest.TestCase):
 
     def test_import_arguments(self):
         checked = manifest.load(EXAMPLE)
-        request = manifest.import_request(checked, "1.0-720k", "/out/example")
+        request = manifest.import_request(checked, "1.0-720k-r1", "/out/example")
         self.assertEqual(
             manifest.import_arguments(request, manifest.open_statement(checked)),
             [
                 "image", "media", "import", "/out/example/example-720.img",
-                "--title", "Example", "--tag", "unemu/media/example:1.0-720k",
+                "--title", "Example", "--tag", "unemu/media/ibm-pc/example:1.0-720k-r1",
                 "--label", "1=Disk 1 of 1 - example installation (example-720.img)",
                 "--format", "1=720K",
                 "--extra", "/out/example/LICENSE.TXT:LICENSE.TXT",
@@ -257,7 +279,7 @@ class Accepted(unittest.TestCase):
             d["set"][0]["disk"].append({"path": "two.img", "sha256": HASH, "label": "Second"})
         checked = manifest.validate(changed(change))
         args = manifest.import_arguments(
-            manifest.import_request(checked, "1.0", "/o"), manifest.open_statement(checked)
+            manifest.import_request(checked, "1.0-r1", "/o"), manifest.open_statement(checked)
         )
         self.assertEqual(args[3:5], ["/o/example-1440.img", "/o/two.img"])
         self.assertEqual(
@@ -283,10 +305,11 @@ class Accepted(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         described = json.loads(result.stdout)
         self.assertEqual([d["ref"] for d in described],
-                         ["unemu/media/example:1.0", "unemu/media/example:1.0-720k"])
+                         ["unemu/media/ibm-pc/example:1.0-r1", "unemu/media/ibm-pc/example:1.0-720k-r1"])
         self.assertEqual([d["digest"] for d in described], [pin, None])
-        self.assertEqual({d["repository"] for d in described}, {"unemu/media/example"})
-        self.assertEqual([d["tag"] for d in described], ["1.0", "1.0-720k"])
+        self.assertEqual({d["repository"] for d in described}, {"unemu/media/ibm-pc/example"})
+        self.assertEqual([d["tag"] for d in described], ["1.0-r1", "1.0-720k-r1"])
+        self.assertEqual([d["alias"] for d in described], ["1.0", "1.0-720k"])
         self.assertEqual({d["kind"] for d in described}, {"media"})
         # A set's store tag is its ref.
         self.assertEqual([d["store_tag"] for d in described], [d["ref"] for d in described])
@@ -296,7 +319,7 @@ class Accepted(unittest.TestCase):
         self.assertEqual(
             described[1]["import"],
             manifest.import_arguments(
-                manifest.import_request(checked, "1.0-720k", out_dir), manifest.open_statement(checked)
+                manifest.import_request(checked, "1.0-720k-r1", out_dir), manifest.open_statement(checked)
             ),
         )
         self.assertEqual(run("sets", str(EXAMPLE)).returncode, 2)
@@ -332,15 +355,19 @@ class Refused(unittest.TestCase):
         self.refused(lambda d: self.first_disk(d).pop("sha256"), "set[1].disk[1]: missing required key 'sha256'")
 
     def test_work(self):
-        for work in ("Example", "unemu/media/example", "-example", "example-", "exa mple", "", 7):
+        for work in ("Example", "unemu/media/ibm-pc/example", "-example", "example-", "exa mple", "", 7):
             self.refused(lambda d, work=work: d["release"].update(work=work), "release.work")
-        self.refused(lambda d: d["release"].update(work="a" * 244), "is longer than 255 bytes")
-        manifest.validate(changed(lambda d: d["release"].update(work="a" * 243)))
+        # unemu/media/ibm-pc/ is 19 bytes.
+        self.refused(lambda d: d["release"].update(work="a" * 237), "is longer than 255 bytes")
+        manifest.validate(changed(lambda d: d["release"].update(work="a" * 236)))
 
     def test_version(self):
         for version in ("1.0-beta", "V1.0", "v1.0", "1.0 ", "", ".1", "1_0", 1.0):
             self.refused(lambda d, version=version: d["release"].update(version=version), "release.version")
-        self.refused(lambda d: d["release"].update(version="1" * 129), "is not a valid tag")
+        # The tag is at most 128 bytes: the version and -r1.
+        self.refused(lambda d: d["release"].update(version="1" * 126), "is not a valid revision tag")
+        self.refused(lambda d: d["release"].update(version="1" * 129), "is not a valid revision tag")
+        manifest.validate(changed(lambda d: (d["release"].update(version="1" * 125), d["set"].pop())))
         for version in ("1.", "1.4.", "1a."):
             self.refused(lambda d, version=version: d["release"].update(version=version),
                          "ending with a letter or digit")
@@ -368,24 +395,35 @@ class Refused(unittest.TestCase):
             other_default = kind_named(directory, "other-default")
             other_default.write_text(text.replace('default_format = "1.44M"', 'default_format = "720K"'),
                                      encoding="utf-8")
-            # Each manifest alone is valid; together both give example:1.0.
+            # Each manifest alone is valid; together both give example:1.0-r1.
             self.assertEqual(run("check", str(other_default)).returncode, 0)
             result = run("refs", str(EXAMPLE), str(other_default))
             self.assertEqual(result.returncode, 1)
-            self.assertIn("unemu/media/example:1.0 is also", result.stderr)
+            self.assertIn("unemu/media/ibm-pc/example:1.0-r1 is also", result.stderr)
             self.assertEqual(result.stdout, "")
             result = run("refs", str(EXAMPLE), str(EXAMPLE))
             self.assertEqual(result.returncode, 1)
+
+            # Another revision of the same releases: other refs, but the
+            # same aliases, which name one set each.
+            revised = kind_named(directory, "revised")
+            revised.write_text(text.replace('\nformat = "1.44M"\n', '\nformat = "1.44M"\nrevision = 2\n')
+                               .replace('\nformat = "720K"\n', '\nformat = "720K"\nrevision = 2\n'), encoding="utf-8")
+            self.assertEqual([s.tag for s in manifest.load(revised).sets], ["1.0-r2", "1.0-720k-r2"])
+            result = run("refs", str(EXAMPLE), str(revised))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("the release alias unemu/media/ibm-pc/example:1.0 of "
+                          "unemu/media/ibm-pc/example:1.0-r2 is also", result.stderr)
 
             other_work = kind_named(directory, "other-work")
             other_work.write_text(text.replace('work = "example"', 'work = "example2"'), encoding="utf-8")
             result = run("refs", str(EXAMPLE), str(other_work))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), [
-                "unemu/media/example:1.0",
-                "unemu/media/example:1.0-720k",
-                "unemu/media/example2:1.0",
-                "unemu/media/example2:1.0-720k",
+                "unemu/media/ibm-pc/example:1.0-r1",
+                "unemu/media/ibm-pc/example:1.0-720k-r1",
+                "unemu/media/ibm-pc/example2:1.0-r1",
+                "unemu/media/ibm-pc/example2:1.0-720k-r1",
             ])
 
             broken = kind_named(directory, "broken")
@@ -414,12 +452,15 @@ class Refused(unittest.TestCase):
         for revision in (0, -1, True, "2", 1.5):
             self.refused(lambda d, r=revision: d["set"][0].update(revision=r), "set[1].revision")
         self.refused(lambda d: d["set"][1].update(format="1.44M"),
-                     "set[2]: the derived tag '1.0' is also set[1]'s")
+                     "set[2]: the derived tag '1.0-r1' is also set[1]'s")
 
         def same_revision(d):
             d["set"][1].update(format="1.44M", revision=2)
             d["set"][0].update(revision=2)
         self.refused(same_revision, "the derived tag '1.0-r2' is also set[1]'s")
+        # Two revisions of one release: its alias names one set.
+        self.refused(lambda d: d["set"][1].update(format="1.44M", revision=2),
+                     "set[2]: the release '1.0' is also set[1]'s")
         self.refused(lambda d: d["release"].update(default_format="2.88M"), "release.default_format")
 
     def test_copyleft_without_source(self):
@@ -661,9 +702,10 @@ class FirmwareAccepted(unittest.TestCase):
         self.assertIsInstance(checked, manifest.FirmwareManifest)
         package = checked.package
         self.assertEqual(package.catalogue_id, "example-bios-1.0")
-        self.assertEqual(package.repository, "unemu/firmware/example-bios-1.0")
-        self.assertEqual(package.tag, "1")
-        self.assertEqual(package.store_tag, "firmware/example-bios-1.0:1")
+        self.assertEqual(package.repository, "unemu/firmware/ibm-pc/example-bios-1.0")
+        self.assertEqual(package.tag, "r1")
+        self.assertIsNone(package.alias)
+        self.assertEqual(package.store_tag, "private/firmware/ibm-pc/example-bios-1.0:r1")
         self.assertIsNone(package.digest)
         self.assertEqual(package.labels, ("system-bios", "open-source"))
         self.assertEqual(package.description,
@@ -677,7 +719,7 @@ class FirmwareAccepted(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
         self.assertEqual(result.stdout, f"{FIRMWARE}: ok, firmware package example-bios-1.0 revision 1, "
-                                        "2 outputs\n  unemu/firmware/example-bios-1.0:1\n")
+                                        "2 outputs\n  unemu/firmware/ibm-pc/example-bios-1.0:r1\n")
         result = run("pins", str(FIRMWARE))
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(result.stdout, f"example-bios.bin {'1' * 64}\nexample-bios-1.0-src.tar {'2' * 64}\n")
@@ -689,10 +731,10 @@ class FirmwareAccepted(unittest.TestCase):
             d["package"].update(revision=12, digest=pin)
             d["source"]["path"] = "src/example.zip"
         checked = manifest.validate_firmware(firmware_changed(change))
-        self.assertEqual((checked.package.tag, checked.package.digest), ("12", pin))
-        # upcli tags the import revision 1 in the store, whatever the revision.
-        self.assertEqual(checked.package.store_tag, "firmware/example-bios-1.0:1")
-        self.assertEqual(manifest.refs([("m", checked)]), ["unemu/firmware/example-bios-1.0:12"])
+        self.assertEqual((checked.package.tag, checked.package.digest), ("r12", pin))
+        # upcli tags the import r1 in the store, whatever the revision.
+        self.assertEqual(checked.package.store_tag, "private/firmware/ibm-pc/example-bios-1.0:r1")
+        self.assertEqual(manifest.refs([("m", checked)]), ["unemu/firmware/ibm-pc/example-bios-1.0:r12"])
 
     def test_limits_accepted(self):
         def change(d):
@@ -724,10 +766,11 @@ class FirmwareAccepted(unittest.TestCase):
         (artifact,) = manifest.artifacts(checked, "/out/example")
         self.assertEqual(artifact, manifest.Artifact(
             kind="firmware",
-            ref="unemu/firmware/example-bios-1.0:1",
-            repository="unemu/firmware/example-bios-1.0",
-            tag="1",
-            store_tag="firmware/example-bios-1.0:1",
+            ref="unemu/firmware/ibm-pc/example-bios-1.0:r1",
+            repository="unemu/firmware/ibm-pc/example-bios-1.0",
+            tag="r1",
+            alias=None,
+            store_tag="private/firmware/ibm-pc/example-bios-1.0:r1",
             license="GPL-2.0-or-later",
             digest=None,
             arguments=tuple(manifest.firmware_import_arguments(checked, "/out/example")),
@@ -737,10 +780,11 @@ class FirmwareAccepted(unittest.TestCase):
         out_dir = str(pathlib.Path("out/example").resolve())
         self.assertEqual(json.loads(result.stdout), [{
             "kind": "firmware",
-            "ref": "unemu/firmware/example-bios-1.0:1",
-            "repository": "unemu/firmware/example-bios-1.0",
-            "tag": "1",
-            "store_tag": "firmware/example-bios-1.0:1",
+            "ref": "unemu/firmware/ibm-pc/example-bios-1.0:r1",
+            "repository": "unemu/firmware/ibm-pc/example-bios-1.0",
+            "tag": "r1",
+            "alias": None,
+            "store_tag": "private/firmware/ibm-pc/example-bios-1.0:r1",
             "license": "GPL-2.0-or-later",
             "digest": None,
             "import": manifest.firmware_import_arguments(checked, out_dir),
@@ -749,13 +793,13 @@ class FirmwareAccepted(unittest.TestCase):
     def test_refs_with_sets(self):
         checked = [("sets.toml", manifest.load(EXAMPLE)), ("package.toml", manifest.load(FIRMWARE))]
         self.assertEqual(manifest.refs(checked), [
-            "unemu/media/example:1.0",
-            "unemu/media/example:1.0-720k",
-            "unemu/firmware/example-bios-1.0:1",
+            "unemu/media/ibm-pc/example:1.0-r1",
+            "unemu/media/ibm-pc/example:1.0-720k-r1",
+            "unemu/firmware/ibm-pc/example-bios-1.0:r1",
         ])
         result = run("refs", str(EXAMPLE), str(FIRMWARE))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines()[-1], "unemu/firmware/example-bios-1.0:1")
+        self.assertEqual(result.stdout.splitlines()[-1], "unemu/firmware/ibm-pc/example-bios-1.0:r1")
 
     def test_the_recipes(self):
         # The real package manifests: every pin as the release assets, every
@@ -768,9 +812,26 @@ class FirmwareAccepted(unittest.TestCase):
             self.assertIsNotNone(package.package.digest, path)
             self.assertEqual(package.package.revision, 1, path)
         self.assertEqual(manifest.refs(checked), [
-            "unemu/firmware/unemu-at-bios-1.0.2-unemu.3:1",
-            "unemu/firmware/vgabios-0.9d-unemu.1-std:1",
-            "unemu/firmware/xub-r638-xtp-ata1f0:1",
+            "unemu/firmware/ibm-pc/unemu-at-bios-1.0.2-unemu.3:r1",
+            "unemu/firmware/ibm-pc/vgabios-0.9d-unemu.1-std:r1",
+            "unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1",
+        ])
+
+    def test_the_set_recipes(self):
+        # The real set manifests: every set pinned, each tag its release's
+        # first revision.
+        recipes = sorted((HERE.parent / "recipes").glob("*/media.toml"))
+        self.assertEqual([path.parent.name for path in recipes], ["freedos-1.4-floppy", "kenslab-2.01"])
+        checked = [(str(path), manifest.load(path)) for path in recipes]
+        for path, sets in checked:
+            for media_set in sets.sets:
+                self.assertIsNotNone(media_set.digest, path)
+                self.assertEqual((media_set.revision, media_set.tag), (1, f"{media_set.alias}-r1"), path)
+        self.assertEqual(manifest.refs(checked), [
+            "unemu/media/ibm-pc/freedos:1.4-r1",
+            "unemu/media/ibm-pc/freedos:1.4-1.2m-r1",
+            "unemu/media/ibm-pc/freedos:1.4-720k-r1",
+            "unemu/media/ibm-pc/kenslab:2.01-r1",
         ])
 
 
@@ -853,8 +914,9 @@ class FirmwareRefused(unittest.TestCase):
     def test_catalogue_id(self):
         for value in ("Example", "-example", "example-", "exa mple", "a/b", "a..b", "", 7, None):
             self.refused(lambda d, v=value: d["package"].update(catalogue_id=v), "package.catalogue_id")
-        self.refused(lambda d: d["package"].update(catalogue_id="a" * 241), "is longer than 255 bytes")
-        manifest.validate_firmware(firmware_changed(lambda d: d["package"].update(catalogue_id="a" * 240)))
+        # unemu/firmware/ibm-pc/ is 22 bytes.
+        self.refused(lambda d: d["package"].update(catalogue_id="a" * 234), "is longer than 255 bytes")
+        manifest.validate_firmware(firmware_changed(lambda d: d["package"].update(catalogue_id="a" * 233)))
 
     def test_revision(self):
         for revision in (0, -1, True, "1", 1.5):
@@ -912,10 +974,10 @@ class FirmwareRefused(unittest.TestCase):
         checked = manifest.load(FIRMWARE)
         with self.assertRaises(manifest.Refusal) as caught:
             manifest.refs([("a.toml", checked), ("b.toml", checked)])
-        self.assertIn("b.toml: package: unemu/firmware/example-bios-1.0:1 is also a.toml: package",
+        self.assertIn("b.toml: package: unemu/firmware/ibm-pc/example-bios-1.0:r1 is also a.toml: package",
                       str(caught.exception))
         # Another revision of the same catalogue id: upcli would import both
-        # as firmware/example-bios-1.0:1.
+        # as private/firmware/ibm-pc/example-bios-1.0:r1.
         second = manifest.validate_firmware(firmware_changed(lambda d: d["package"].update(revision=2)))
         with self.assertRaises(manifest.Refusal) as caught:
             manifest.refs([("a.toml", checked), ("b.toml", second)])

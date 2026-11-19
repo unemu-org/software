@@ -1,8 +1,8 @@
 # unemu-media
 
 Reproducible builds of the open installation media sets
-(`unemu/media/<work>:<tag>`) and open firmware packages
-(`unemu/firmware/<catalogue id>:<revision>`) of the unemu emulators. Each
+(`unemu/media/ibm-pc/<work>:<release>-rN`) and open firmware packages
+(`unemu/firmware/ibm-pc/<catalogue id>:rN`) of the unemu emulators. Each
 one is built from a pinned upstream release, carries its licences and
 corresponding sources, and is published as an OCI artifact for
 [unemupc](https://github.com/unemu-org/unemupc), whose library and machine
@@ -19,8 +19,9 @@ templates pull them.
   copyleft content; when in doubt, nothing is published.
 - **Reproducible.** The same recipe gives the same bytes and digests on
   every run and host.
-- **A tag never moves.** A published media tag or package revision is never
-  overwritten.
+- **A revision tag never moves.** A published `rN` tag (`freedos:1.4-r1`,
+  a package's `r1`) is never overwritten; a set's release alone
+  (`freedos:1.4`) is the alias of its newest revision.
 
 The full rules are in [AGENTS.md](AGENTS.md).
 
@@ -41,10 +42,11 @@ recipes are built, it needs no network at all.
 `lib/publish.py --push` pushes only when every selected set and package
 passed its checks and its manifest pins its digest. The registry
 credentials come from the environment and reach only the `upcli image push`
-call. A tag never moves: a tag that already holds another digest is
-refused, and `--move` is never used; the movable `latest` alias is not
-pushed yet. For CI, `--experimental RUN` targets `unemu/experimental/`
-instead. Pushing is the maintainer's step. Details:
+call. A revision tag never moves: one that already holds another digest
+is refused, and `--move` is never used. Each set's release alias is pushed
+after its revision, and refused, never moved, when it names another image;
+sets and packages have no `latest`. For CI, `--experimental RUN` targets
+`unemu/experimental/` instead. Pushing is the maintainer's step. Details:
 [docs/publishing.md](docs/publishing.md).
 
 [CI](docs/publishing.md#ci) checks what a change touches, pushes it from

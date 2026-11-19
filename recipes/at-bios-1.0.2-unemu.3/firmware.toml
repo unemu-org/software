@@ -1,8 +1,9 @@
 # The unemu AT BIOS 1.0.2-unemu.3, the system BIOS of unemupc's open AT
-# templates, as the firmware package unemu/firmware/unemu-at-bios-1.0.2-unemu.3
-# (revision 1). build.sh downloads the ROM and its source archive from the
-# release assets of github.com/unemu-org/at-bios v1.0.2-unemu.3; the pins
-# below are its outputs in out/at-bios-1.0.2-unemu.3/, equal to the ROM and
+# templates, as the firmware package
+# unemu/firmware/ibm-pc/unemu-at-bios-1.0.2-unemu.3:r1 (revision 1). build.sh
+# downloads the ROM and its source archive from the release assets of
+# github.com/unemu-org/at-bios v1.0.2-unemu.3; the pins below are its
+# outputs in out/at-bios-1.0.2-unemu.3/, equal to the ROM and
 # the source archive unemupc's firmware catalogue pins for this id
 # (crates/assembly/src/firmware.rs). The title, description, vendor, version
 # and labels are unemupc's (pc_image::template::FIRMWARE), word for word, so
@@ -13,7 +14,7 @@
 [package]
 catalogue_id = "unemu-at-bios-1.0.2-unemu.3"
 revision = 1
-digest = "sha256:7a4d34f3e6d229d0857a592daf2f6412be33aa0dc385bdd605e28cf6eac6c64e"
+digest = "sha256:e3c226ae2cb8935ffacf9fb806124d1c1219388c8af4f0fb60ef5a96fbd86c58"
 title = "unemu AT BIOS 1.0.2-unemu.3"
 description = "The system BIOS of the open AT templates: release 1.0.2-unemu.3 of unemu-at-bios, the unemu fork of 8088_bios 1.0.2 by Sergey Kiselev, its original author. Its unemu-at build is a 32 KiB ROM at F8000h-FFFFFh for IBM 5170-class 80286 boards with two 8259s, two 8237s, an 8042 and an MC146818. Unlike upstream it resumes through the CMOS shutdown byte, answers INT 15h AH=87h and AH=88h, measures extended memory into CMOS 30h-31h, clears the memory it finds above 1 MiB on every POST and checks the CMOS as the IBM PC/AT BIOS does. It serves diskettes only; fixed disks come from an option ROM such as the XTIDE Universal BIOS. Licensed under GPL-3.0-or-later; the package includes its corresponding source archive."
 vendor = "unemu (fork of Sergey Kiselev's 8088_bios)"

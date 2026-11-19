@@ -3,10 +3,10 @@
 #
 # The unemu AT BIOS, release v1.0.2-unemu.3 of github.com/unemu-org/at-bios,
 # for the firmware package of firmware.toml:
-# unemu/firmware/unemu-at-bios-1.0.2-unemu.3. The fork's own release workflow
-# builds the ROM and its source archive with the fork's Nix flake and attaches
-# both to the release; this recipe downloads those two assets, and no other,
-# and installs them unmodified. It builds nothing from source (bd memory
+# unemu/firmware/ibm-pc/unemu-at-bios-1.0.2-unemu.3:r1. The fork's own
+# release workflow builds the ROM and its source archive with the fork's Nix
+# flake and attaches both to the release; this recipe downloads those two
+# assets, and no other, and installs them unmodified. It builds nothing from source (bd memory
 # 'firmware-rules', rule (a)).
 #
 # Outputs, in out/at-bios-1.0.2-unemu.3/, byte-identical to the release

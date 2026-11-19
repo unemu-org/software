@@ -1,7 +1,7 @@
 # The unemu VGA BIOS 0.9d-unemu.1, standard VGA build, the video BIOS of
 # unemupc's open AT templates, as the firmware package
-# unemu/firmware/vgabios-0.9d-unemu.1-std (revision 1). build.sh downloads
-# the ROM and its source archive from the release assets of
+# unemu/firmware/ibm-pc/vgabios-0.9d-unemu.1-std:r1 (revision 1). build.sh
+# downloads the ROM and its source archive from the release assets of
 # github.com/unemu-org/vgabios v0.9d-unemu.1; the pins below are its outputs
 # in out/vgabios-0.9d-unemu.1/, equal to the ROM and the source archive
 # unemupc's firmware catalogue pins for this id
@@ -14,7 +14,7 @@
 [package]
 catalogue_id = "vgabios-0.9d-unemu.1-std"
 revision = 1
-digest = "sha256:fa521a4f878c77706f143079b996c7486aa71c1ee408cc5977601f51d419ebb0"
+digest = "sha256:179a11dbd20741e1e3775388ed42bdf9de2b62e9136c0467271d34271b769d57"
 title = "unemu VGA BIOS 0.9d-unemu.1, standard VGA"
 description = "The video BIOS of the open AT templates: the unemu fork of the LGPL VGABIOS 0.9d, the video BIOS Bochs and QEMU use, in its standard ISA VGA build with no VBE, PCI, Cirrus or Banshee code and 80286 instructions only. The 32 KiB ROM fills the C0000h-C7FFFh video-ROM window of an IBM 5170-class board with a register-level VGA card. Unlike upstream, teletype output sounds the PC speaker for BEL (07h): about 896 Hz for about 0.48 s, as the IBM PC/AT BIOS beeps. Licensed under LGPL-2.1-or-later; the package includes its corresponding source archive."
 vendor = "unemu (fork of the LGPL VGABIOS project)"

@@ -24,20 +24,20 @@
 # The keys are exactly these: lib/upcli.py refuses any other, and a missing
 # or malformed one.
 
-commit = "87244b497749eca8a8cb3b8d09b66aaa9b015c25"
-tag = "v0.0.2"
-version = "0.0.2"
+commit = "2bb02216b3466179fd4923dda49aca75a34dc98d"
+tag = "v0.0.3"
+version = "0.0.3"
 
 [archive.x86_64-unknown-linux-gnu]
-file = "unemupc-0.0.2-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "e33fde287e3e9236d62af45800ba441e5bd03fcf6d6e29ba9db72f6eb997ba57"
-size = 29951514
-upcli_sha256 = "c7dd641cff602fa26ea4d944e43ef3607beaa8027f7ff591bc8433c10cb93aba"
-upcli_size = 33310368
+file = "unemupc-0.0.3-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "dc547bfd74735de9fc68f21b0b05ffec41dc843f47aabfad0e19075185099db1"
+size = 34350327
+upcli_sha256 = "cc9ed594328f8ab6021c7880de381dab39af150feb63bf9a6c690ab00c0ca31d"
+upcli_size = 37831904
 
 [archive.aarch64-apple-darwin]
-file = "unemupc-0.0.2-aarch64-apple-darwin.tar.gz"
-sha256 = "657036c63470874dacfee37b1eccfd4b1cbd1340dba7baaa26d3c5f9005b3791"
-size = 27747076
-upcli_sha256 = "cd22b12dce31b51edbd0965d5e62707b3c3a4633d0148123309aa467520a1e38"
-upcli_size = 30945744
+file = "unemupc-0.0.3-aarch64-apple-darwin.tar.gz"
+sha256 = "54eeece51546fdbeffeb1de37c924681140f00fea62e02b8aeff0fea581cf0e0"
+size = 31543720
+upcli_sha256 = "a0eca7828b3d9eef0e87389d85a89db0a31dc5a36dd0a27c28b1da83989d2e1f"
+upcli_size = 34678064

@@ -1,9 +1,10 @@
 # The FreeDOS 1.4 Floppy Edition, released by the FreeDOS Project on
-# 2025-04-02, in each floppy format it ships: unemu/media/freedos:1.4 (the
-# edition's own 3.5-inch 1.44M disks), :1.4-1.2m (5.25-inch 1.2M) and
-# :1.4-720k (3.5-inch 720K). build.sh fetches and checks the disks and builds
-# the extras; the pins below are its outputs in out/freedos-1.4-floppy/, and
-# each set's digest is the one the pinned upcli (upcli.toml) gives it. The
+# 2025-04-02, in each floppy format it ships: unemu/media/ibm-pc/freedos:1.4-r1
+# (the edition's own 3.5-inch 1.44M disks), :1.4-1.2m-r1 (5.25-inch 1.2M) and
+# :1.4-720k-r1 (3.5-inch 720K), with the release aliases :1.4, :1.4-1.2m and
+# :1.4-720k. build.sh fetches and checks the disks and builds the extras;
+# the pins below are its outputs in out/freedos-1.4-floppy/, and each set's
+# digest is the one the pinned upcli (upcli.toml) gives it. The
 # disks are the edition's images, unmodified, in installer order; the
 # descriptions and disk labels are unemupc98's (pc_image::template::MEDIA).
 # The title deliberately differs from unemupc98's ("FreeDOS 1.4 (Floppy
@@ -49,7 +50,7 @@ kind = "archive"
 title = "FreeDOS"
 description = "The official FreeDOS 1.4 Floppy Edition on seven 3.5-inch 1.44M diskettes, unmodified: the boot disk with the floppy installer, then six disks of packages in a Slicer archive. It installs FreeDOS 1.4 with a set of programs suited to classic PCs, the 80286 included, on any PC that runs FreeDOS with EGA or better graphics. Released by the FreeDOS Project on 2 April 2025. GPL and other open source licences, listed per program in LICENSES.TXT; the set carries the official FreeDOS source packages of its programs."
 format = "1.44M"
-digest = "sha256:f0114238645cf823c3cfa998bb1a488e6872e56676a78b4fdd7308c319079b93"
+digest = "sha256:2ee5d72d786f38a045aa16b2ece05fa36c488d7a9ec5af60d77b9ab595f3b7b0"
 
 [[set.disk]]
 path = "144m/x86BOOT.img"
@@ -90,7 +91,7 @@ label = "Disk 7 of 7 - packages (x86DSK06.img)"
 title = "FreeDOS"
 description = "The official FreeDOS 1.4 Floppy Edition on eight 5.25-inch 1.2M diskettes, unmodified: the boot disk with the floppy installer, then seven disks of packages in a Slicer archive. It installs FreeDOS 1.4 with a set of programs suited to classic PCs, the 80286 included, on any PC that runs FreeDOS with EGA or better graphics. Released by the FreeDOS Project on 2 April 2025. GPL and other open source licences, listed per program in LICENSES.TXT; the set carries the official FreeDOS source packages of its programs."
 format = "1.2M"
-digest = "sha256:3f39b4d5993b843a265e522cededfe8f1ccc05865ab88d0f23c27ada3e0de89d"
+digest = "sha256:1320a2879fafc3ad55c36925557bf6a619b32fcd75f30fbec98fd71a1a9f5f6d"
 
 [[set.disk]]
 path = "120m/x86BOOT.img"
@@ -136,7 +137,7 @@ label = "Disk 8 of 8 - packages (x86DSK07.img)"
 title = "FreeDOS"
 description = "The official FreeDOS 1.4 Floppy Edition on twelve 3.5-inch 720K diskettes, unmodified: the boot disk with the floppy installer, then eleven disks of packages in a Slicer archive. It installs FreeDOS 1.4 with a set of programs suited to classic PCs, the 80286 included, on any PC that runs FreeDOS with EGA or better graphics. Released by the FreeDOS Project on 2 April 2025. GPL and other open source licences, listed per program in LICENSES.TXT; the set carries the official FreeDOS source packages of its programs."
 format = "720K"
-digest = "sha256:1f789ef40eed3566c5fa84d792cf2acddaddb14cc5ae057d1278802b29341c5e"
+digest = "sha256:bd3a30078c09e13299484449930377ff0234f06cea8c2922b331526305c35e57"
 
 [[set.disk]]
 path = "720k/x86BOOT.img"

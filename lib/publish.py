@@ -14,17 +14,20 @@ asked.
     --store DIR         import into DIR, a new directory kept afterwards
                         (default: a fresh store under build/, removed
                         afterwards)
-    --experimental RUN  target <host>/unemu/experimental/media/<work>:
-                        <media-tag>.ci<RUN> and <host>/unemu/experimental/
-                        firmware/<id>:<revision>.ci<RUN> (RUN: the CI run's
-                        id, from 1) instead of <host>/unemu/media/<work>:
-                        <media-tag> and <host>/unemu/firmware/<id>:<revision>
+    --experimental RUN  target <host>/unemu/experimental/media/ibm-pc/<work>:
+                        <release>-ci<RUN>-rN (and its alias <release>-ci<RUN>)
+                        and <host>/unemu/experimental/firmware/ibm-pc/<id>:
+                        ci<RUN>-rN (RUN: the CI run's id, from 1) instead of
+                        <host>/unemu/media/ibm-pc/<work>:<release>-rN (and
+                        its alias <release>) and <host>/unemu/firmware/
+                        ibm-pc/<id>:rN
     --skip-published    read each pinned set's and package's own tag on the
                         registry (unemu/media/... or unemu/firmware/...,
-                        with --experimental too) anonymously first: one that
-                        already serves the pinned digest is `published` and
-                        is neither built, imported nor pushed; one that
-                        serves another digest is `refused`
+                        with --experimental too) anonymously first, and a
+                        set's alias: one that already serves the pinned
+                        digest under both is `published` and is neither
+                        built, imported nor pushed; one that serves another
+                        digest is `refused`
     --no-build          run no build.sh: the outputs must already be in
                         out/<recipe>/ and match their pins
     --push              push every checked set and package; without it
@@ -34,9 +37,15 @@ asked.
                         manifest pins no digest yet (to measure a new
                         recipe's digests); never with --push
     RECIPE|REF          a recipe (recipes/<recipe>/), one set's ref
-                        (unemu/media/<work>:<tag>) or one package's ref
-                        (unemu/firmware/<id>:<revision>); default: every
-                        recipe
+                        (unemu/media/ibm-pc/<work>:<release>-rN) or one
+                        package's ref (unemu/firmware/ibm-pc/<id>:rN);
+                        default: every recipe
+
+Tags follow unemupc's decision-38: a tag that ends in rN names one set or
+package for ever and never moves; a set's release alone (1.4 of 1.4-r1) is
+an alias that names its newest revision, and the pipeline pushes it after
+the revision; a package tag names no release and has no alias. Sets and
+packages have no `latest`.
 
 Each recipe has one manifest: media.toml, the sets of an installation media
 release, or firmware.toml, one firmware package (lib/manifest.py). The
@@ -47,13 +56,16 @@ steps, in order; a set or package that fails one is not taken further:
     called here). A refusal stops the run before anything else.
  2. With --skip-published, for each selected set or package with a digest
     pin, an anonymous HTTPS read of its own tag on the registry
-    (anonymous_digest, as before a push), whatever the target: a tag that
+    (anonymous_digest, as before a push), whatever the target, and of a
+    set's own alias once its tag serves the pin: a tag (and alias) that
     serves the pinned digest is `published` and goes no further, so a
     recipe whose sets and packages are all published is not built; a tag
-    that serves another digest is `refused` (a tag never moves: a new one is
-    needed); a missing tag goes on. A read that fails fails the set or
-    package. One without a pin cannot be compared: it goes on, and ends
-    `unpinned` as below.
+    or alias that serves another digest is `refused` (a revision tag never
+    moves, an alias is never moved here, and no next revision is published
+    for now: the maintainer decides); a missing tag, or a missing alias of
+    a published tag, goes on and is pushed. A read that fails fails the
+    set or package. One without a pin cannot be compared: it goes on, and
+    ends `unpinned` as below.
  3. Each selected recipe's build.sh (whose fast path stops at once when its
     outputs already match their pins), then every output of the recipe
     checked here against its pin. With --no-build no build.sh runs: the
@@ -68,24 +80,31 @@ steps, in order; a set or package that fails one is not taken further:
     `upcli image firmware show`: its title, vendor, version, description,
     labels, ROM, source archive and every layer's licence must be the
     manifest's. Either show's last line must report it pushable to unemu/.
-    Then `upcli image push --dry-run` against the target, whose guard must
-    say allowed. All run offline. The import, the show and the dry run must
-    name the same store tag, target and digest.
+    Then `upcli image push --dry-run` against the target, and a set's
+    against its alias too, whose guard must say allowed. All run offline;
+    the dry run checks no tag rule, which only a push does on the registry.
+    The import, the show and the dry runs must name the same store tag,
+    targets and digest.
  5. The digest compared with the manifest's digest pin: another digest fails
     the run. One without a pin is reported with its digest, is never
     pushed, and fails the run unless --allow-unpinned is given.
  6. With --push, and only when everything selected passed and is pinned:
     for each that is not `published`, an anonymous HTTPS read of the target
-    tag on the registry first (anonymous_digest). A missing tag is pushed
-    with `upcli image push` (never --move) and read back: a read-back that
-    fails or names another digest leaves it `unconfirmed` (pushed, not
-    confirmed). A tag that already names the same digest is skipped; a tag
-    that names another digest is refused: a media tag and a package revision
-    never move. Any failure fails the run, and nothing after it is pushed;
-    everything still gets its row in the summary. The `latest` alias is
-    never pushed.
+    tag, and of a set's target alias, on the registry first
+    (anonymous_digest). Either naming another digest refuses the set or
+    package before anything of it is pushed: a revision tag never moves, and
+    an alias is never moved here. Then the missing ones are pushed with
+    `upcli image push` (never --move), the revision first, then the alias,
+    which upcli lets onto the newest revision the registry has; each is
+    read back: a read-back that fails or names another digest leaves it
+    `unconfirmed` (pushed, not confirmed). A set whose revision tag is on
+    the registry with its digest but whose alias push or read-back fails is
+    `partial`, and its detail names the confirmed revision tag. A tag or
+    alias that already names the same digest is skipped. Any failure fails
+    the run, and nothing after it is pushed; everything still gets its row
+    in the summary.
 
-A summary table (repository, tag, digest, outcome, licence) goes to
+A summary table (repository, tag, alias, digest, outcome, licence) goes to
 stdout, progress to stderr. Exit status: 0 when everything selected passed
 (and, with --push, is on the registry), 1 otherwise, 2 for a usage error.
 
@@ -177,8 +196,11 @@ RECIPE_HIDDEN_WORDS = ("PASSWORD", "TOKEN", "SECRET", "CREDENTIAL")
 # upcli's family default registry (image_registry::reference::DEFAULT_REGISTRY).
 DEFAULT_HOST = "registry.unemu.dev"
 # Every repository lives in unemu/; an experimental target puts
-# experimental/ after it (unemu/experimental/media/<work>,
-# unemu/experimental/firmware/<id>).
+# experimental/ after it (unemu/experimental/media/ibm-pc/<work>,
+# unemu/experimental/firmware/ibm-pc/<id>), and ci<RUN> as the last part of
+# its tag's release (<release>-ci<RUN>-rN, ci<RUN>-rN): a revision tag of
+# its own per run, which never moves, and for a set the alias
+# <release>-ci<RUN>, pushed as the official alias is.
 OFFICIAL_PREFIX = "unemu/"
 EXPERIMENTAL_PREFIX = "unemu/experimental/"
 # A recipe's manifest: media.toml or firmware.toml, by kind.
@@ -224,13 +246,15 @@ class RegistryError(Exception):
 @dataclasses.dataclass
 class Item:
     """One selected set or package (a manifest.Artifact) and what became of
-    it; REPOSITORY and TAG are its target's."""
+    it; REPOSITORY, TAG and ALIAS (a set's, None for a package) are its
+    target's."""
 
     recipe: str
     checked: object
     artifact: object
     repository: str
     tag: str
+    alias: str | None = None
     outcome: str = "not checked"
     digest: str | None = None
     detail: str | None = None
@@ -238,14 +262,19 @@ class Item:
 
     @property
     def ref(self):
-        """The set's or package's own ref, unemu/<kind>/<name>:<tag>."""
+        """The set's or package's own ref, unemu/<kind>/ibm-pc/<name>:<tag>."""
         return self.artifact.ref
 
     @property
     def store_tag(self):
         """Its tag in the scratch store: a set's ref, a package's
-        firmware/<id>:1."""
+        private/firmware/ibm-pc/<id>:r1."""
         return self.artifact.store_tag
+
+    def tags(self):
+        """The target's tags to push, in order: the revision tag, then a
+        set's alias, which upcli moves onto the newest revision only."""
+        return [self.tag] + ([self.alias] if self.alias is not None else [])
 
     def fail(self, outcome, detail):
         self.outcome, self.detail, self.failed = outcome, detail, True
@@ -667,7 +696,7 @@ def file_size(path):
 
 def check_firmware_show(cli, item, digest, out_dir, store, env):
     """`upcli image firmware show` of the imported package states the
-    manifest's package (pc-image's CLI image/firmware.rs, show): the store
+    manifest's package (unemupc crates/cli-pc/src/image/firmware.rs, show): the store
     tag, digest and title first; one ROM, the pinned one with its size; the
     vendor, version, description and labels (sorted, as the import stores
     them); one source archive, the pinned one with its file name, format and
@@ -769,11 +798,11 @@ def parse_args(argv, environ):
                         help=f"the upcli binary (default: ${CLI_ENV})")
     parser.add_argument("--store", help="a new directory to import into, kept afterwards")
     parser.add_argument("--experimental", metavar="RUN",
-                        help="target unemu/experimental/media/<work>:<media-tag>.ci<RUN> and "
-                             "unemu/experimental/firmware/<id>:<revision>.ci<RUN>")
+                        help="target unemu/experimental/media/ibm-pc/<work>:<release>-ci<RUN>-rN and "
+                             "unemu/experimental/firmware/ibm-pc/<id>:ci<RUN>-rN")
     parser.add_argument("--skip-published", action="store_true",
-                        help="read each pinned set's and package's own tag anonymously first; one that "
-                             "already serves the pinned digest is neither built nor pushed")
+                        help="read each pinned set's and package's own tag (and a set's alias) anonymously "
+                             "first; one that already serves the pinned digest is neither built nor pushed")
     parser.add_argument("--no-build", action="store_true",
                         help="run no build.sh: the outputs must already be in out/<recipe>/ and match "
                              "their pins")
@@ -868,27 +897,41 @@ def select(parser, root, selectors, out_root):
         for selector in selectors:
             matching = [(r, a) for r, a in every if selector in (r, a.ref)]
             if not matching:
-                parser.error(f"{selector!r} is neither a recipe nor a ref (unemu/media/<work>:<tag> "
-                             "or unemu/firmware/<id>:<revision>)")
+                parser.error(f"{selector!r} is neither a recipe nor a ref "
+                             "(unemu/media/ibm-pc/<work>:<release>-rN or unemu/firmware/ibm-pc/<id>:rN)")
             wanted.update(a.ref for _, a in matching)
         chosen = [(r, a) for r, a in every if a.ref in wanted]
     return [Item(r, checked[r], a, "", "") for r, a in chosen]
 
 
+def experimental_tag(tag, run):
+    """The revision tag TAG (manifest.parse_revision) of run RUN: ci<RUN> as
+    the last part of its release, <release>-ci<RUN>-rN or ci<RUN>-rN; and
+    that release, which is the alias of a set's experimental tag."""
+    parsed = manifest.parse_revision(tag)
+    if parsed is None:
+        raise Failure(f"the tag {tag!r} is not a revision tag")
+    release, number = parsed
+    release = f"ci{run}" if release is None else f"{release}-ci{run}"
+    return f"{release}-r{number}", release
+
+
 def set_target(item, experimental):
-    """Set the item's target repository and tag: its own, or with
-    EXPERIMENTAL (a run id) unemu/experimental/<kind>/<name>:
-    <tag>.ci<RUN>. A Failure when the experimental repository or tag is
-    longer than a repository name or tag may be: the manifests keep their
-    own within the limits, not the experimental one."""
+    """Set the item's target repository, tag and alias: its own, or with
+    EXPERIMENTAL (a run id) unemu/experimental/<kind>/ibm-pc/<name>:
+    <release>-ci<RUN>-rN (experimental_tag), with the alias
+    <release>-ci<RUN> for a set. A Failure when the experimental repository
+    or tag is longer than a repository name or tag may be: the manifests
+    keep their own within the limits, not the experimental one."""
     if experimental is None:
-        item.repository, item.tag = item.artifact.repository, item.artifact.tag
+        item.repository, item.tag, item.alias = item.artifact.repository, item.artifact.tag, item.artifact.alias
         return
     repository = item.artifact.repository
     if not repository.startswith(OFFICIAL_PREFIX):
         raise Failure(f"{repository} is outside {OFFICIAL_PREFIX}")
     item.repository = EXPERIMENTAL_PREFIX + repository[len(OFFICIAL_PREFIX):]
-    item.tag = f"{item.artifact.tag}.ci{experimental}"
+    item.tag, release = experimental_tag(item.artifact.tag, experimental)
+    item.alias = release if item.artifact.alias is not None else None
     if len(item.repository) > manifest.MAX_REPOSITORY:
         raise Failure(
             f"the experimental repository {item.repository} of {item.ref} is "
@@ -899,19 +942,20 @@ def set_target(item, experimental):
 
 
 def summary(items, host, mode):
-    rows = [("REPOSITORY", "TAG", "DIGEST", "OUTCOME", "LICENCE")]
+    rows = [("REPOSITORY", "TAG", "ALIAS", "DIGEST", "OUTCOME", "LICENCE")]
     for item in items:
         rows.append((
             item.repository,
             item.tag,
+            item.alias or "-",
             item.digest or "-",
             item.outcome,
             item.artifact.license,
         ))
-    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    widths = [max(len(row[i]) for row in rows) for i in range(5)]
     print(f"registry {host} ({mode})")
     for row in rows:
-        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row[:4])) + "  " + row[4])
+        print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row[:5])) + "  " + row[5])
     for item in items:
         if item.detail:
             print(f"{item.repository}:{item.tag}: {item.outcome}: {item.detail}")
@@ -1014,10 +1058,13 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
             continue
         for item in group:
             reference = f"{host}/{item.repository}:{item.tag}"
+            if item.alias is not None:
+                reference += f" (alias {item.alias})"
             log(f"== import {item.ref}")
             try:
                 item.digest = import_artifact(cli, item, out_dir, store, env)
-                dry_run(cli, item, reference, store, config, item.digest, env)
+                for tag in item.tags():
+                    dry_run(cli, item, f"{host}/{item.repository}:{tag}", store, config, item.digest, env)
             except Exception as error:  # noqa: BLE001 - every failure reaches the summary
                 item.fail("failed", describe(error))
                 continue
@@ -1040,39 +1087,55 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
     return status
 
 
-def never_moves(item):
-    """Why a tag that holds another digest is the end of the road."""
-    if item.artifact.kind == "firmware":
-        return "a package revision never moves"
-    return "a media tag never moves"
+# Why a tag or alias that names another digest is the end of the road. No
+# next revision is advised: none is published before unemupc's first public
+# release (its decision-32, point 5), and moving a set's alias onto a newer
+# revision, which takes upcli's --move, is not supported here.
+NEVER_MOVES = "a revision tag never moves: stop and ask the maintainer"
+ALIAS_STAYS = "this pipeline never moves an alias: stop and ask the maintainer"
 
 
 def check_published(host, item, registry):
     """--skip-published: the anonymous read of the item's own tag (on
-    unemu/media/ or unemu/firmware/, whatever the target). The same digest
-    as the pin makes it `published`, another digest `refused`; a missing tag
-    leaves it to be built. The row then names the tag that was read. An item
-    without a pin is not read: nothing to compare it with."""
+    unemu/media/ or unemu/firmware/, whatever the target), then of a set's
+    own alias. The pinned digest under both makes it `published`, another
+    digest under either `refused`; a missing tag, or the missing alias of a
+    tag that serves the pin, leaves it to be built and pushed. The row then
+    names the tag that was read. An item without a pin is not read: nothing
+    to compare it with."""
     pinned = item.artifact.digest
     if pinned is None:
         return
-    repository, tag = item.artifact.repository, item.artifact.tag
-    try:
-        current = registry(host, repository, tag)
-    except Exception as error:  # noqa: BLE001 - every failure reaches the summary
-        item.fail("failed", f"reading {repository}:{tag} on {host}: {describe(error)}")
-        return
+    repository, tag, alias = item.artifact.repository, item.artifact.tag, item.artifact.alias
+    served = {}
+    for name in [tag] + ([alias] if alias is not None else []):
+        try:
+            served[name] = registry(host, repository, name)
+        except Exception as error:  # noqa: BLE001 - every failure reaches the summary
+            item.fail("failed", f"reading {repository}:{name} on {host}: {describe(error)}")
+            return
+        if served[name] != pinned:
+            break
+    current = served[tag]
     if current is None:
         log(f"{item.ref}: not on {host} yet")
         return
-    item.repository, item.tag, item.digest = repository, tag, current
-    if current == pinned:
-        item.outcome = "published"
-        log(f"{item.ref}: {host} serves the pinned {pinned}: published, not built or pushed")
+    if current != pinned:
+        item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
+        item.fail("refused", f"{host} already serves {current} under this tag, the manifest pins {pinned}; "
+                             f"{NEVER_MOVES}")
         return
-    other = "a new tag (-rN)" if item.artifact.kind == "media" else "the next revision"
-    item.fail("refused", f"{host} already serves {current} under this tag, the manifest pins {pinned}; "
-                         f"{never_moves(item)}: give it {other}")
+    if alias is not None and served[alias] is None:
+        log(f"{item.ref}: {host} serves the pinned {pinned}, but not under its alias {alias} yet: "
+            "built and pushed again to add the alias")
+        return
+    item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
+    if alias is not None and served[alias] != pinned:
+        item.fail("refused", f"{host} serves the pinned {pinned} under this tag, but its alias {alias} names "
+                             f"{served[alias]}; {ALIAS_STAYS}")
+        return
+    item.outcome = "published"
+    log(f"{item.ref}: {host} serves the pinned {pinned}: published, not built or pushed")
 
 
 def existing_outputs(recipe, checked, out_dir):
@@ -1086,7 +1149,7 @@ def existing_outputs(recipe, checked, out_dir):
 
 
 def push_all(cli, host, items, store, config, env, registry, environ):
-    """Push every set and package, after an anonymous read of its target,
+    """Push every set and package, after an anonymous read of its targets,
     when every one passed and is pinned; stop at the first refusal or
     failure. 1 unless every one ends on the registry. A `published` one is
     already there and is left alone."""
@@ -1106,42 +1169,67 @@ def push_all(cli, host, items, store, config, env, registry, environ):
         if status:
             item.outcome, item.detail = "held", "not pushed: an earlier push failed"
             continue
-        target = f"{host}/{item.repository}:{item.tag}"
-        log(f"== push {target}")
-        push_one(cli, host, item, target, store, config, secrets, registry)
+        push_one(cli, host, item, store, config, secrets, registry)
         if item.failed:
             status = 1
     return status
 
 
-def push_one(cli, host, item, target, store, config, secrets, registry):
-    """One set or package: the anonymous read, the push and the read-back.
-    Whatever goes wrong marks it; once upcli has pushed, a failed or other
-    read-back marks it pushed but unconfirmed."""
+def push_one(cli, host, item, store, config, secrets, registry):
+    """One set or package: the anonymous read of its tag and of a set's
+    alias, then for each that is missing, the revision first, the push and
+    the read-back. Another digest under either refuses it before anything
+    is pushed. Whatever goes wrong marks it; once upcli has pushed, a failed
+    or other read-back marks it pushed but unconfirmed. When the revision
+    tag is on the registry with the digest (read back, or there already)
+    but its alias step fails, it is `partial`, and the detail says so."""
     try:
-        current = registry(host, item.repository, item.tag)
-        if current == item.digest:
-            item.outcome = "present"
-            return
-        if current is not None:
-            item.fail("refused", f"the registry already holds {current} under this tag; {never_moves(item)}")
-            return
-        word, digest = push_artifact(cli, item, target, store, config, secrets)
+        current = {name: registry(host, item.repository, name) for name in item.tags()}
     except Exception as error:  # noqa: BLE001 - every failure reaches the summary
         item.fail("failed", describe(error))
         return
-    if digest != item.digest:
-        item.fail("failed", f"upcli pushed {digest}, the {item.artifact.kind} digest is {item.digest}")
-        return
-    try:
-        served = registry(host, item.repository, item.tag)
-    except Exception as error:  # noqa: BLE001 - every failure reaches the summary
-        item.fail("unconfirmed", f"upcli {word} {digest}; the read-back failed: {describe(error)}")
-        return
-    if served != item.digest:
-        item.fail("unconfirmed", f"upcli {word} {digest}; the registry serves {served}")
-        return
-    item.outcome = "pushed" if word == "pushed" else "present"
+    for name, digest in current.items():
+        if digest not in (None, item.digest):
+            if name == item.tag:
+                item.fail("refused", f"the registry already holds {digest} under this tag; {NEVER_MOVES}")
+            else:
+                item.fail("refused", f"the registry's alias {name} names {digest}; {ALIAS_STAYS}")
+            return
+    # The tags the registry serves with the digest, confirmed by a read.
+    confirmed = [name for name in item.tags() if current[name] == item.digest]
+    pushed = False
+    for name in item.tags():
+        if name in confirmed:
+            continue
+
+        def fail(outcome, detail, name=name):
+            if item.tag in confirmed:
+                outcome = "partial"
+                detail += (f"; the revision tag {item.tag} is on the registry with {item.digest}, "
+                           f"its alias {name} is not confirmed")
+            item.fail(outcome, detail)
+
+        target = f"{host}/{item.repository}:{name}"
+        log(f"== push {target}")
+        try:
+            word, digest = push_artifact(cli, item, target, store, config, secrets)
+        except Exception as error:  # noqa: BLE001 - every failure reaches the summary
+            fail("failed", describe(error))
+            return
+        if digest != item.digest:
+            fail("failed", f"upcli pushed {digest} to :{name}, the {item.artifact.kind} digest is {item.digest}")
+            return
+        try:
+            served = registry(host, item.repository, name)
+        except Exception as error:  # noqa: BLE001 - every failure reaches the summary
+            fail("unconfirmed", f"upcli {word} {digest} to :{name}; the read-back failed: {describe(error)}")
+            return
+        if served != item.digest:
+            fail("unconfirmed", f"upcli {word} {digest} to :{name}; the registry serves {served}")
+            return
+        confirmed.append(name)
+        pushed = pushed or word == "pushed"
+    item.outcome = "pushed" if pushed else "present"
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ these; `lib/upcli.py` refuses any other key, a missing or malformed one, and
 | Key | What it holds |
 | --- | --- |
 | `commit` | the full commit the release's tag points to |
-| `tag`, `version` | the release's tag (`v0.0.2`) and version (`0.0.2`) |
+| `tag`, `version` | the release's tag (`v0.0.3`) and version (`0.0.3`) |
 | `[archive.<triple>]` | one table per platform: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` |
 | `file` | the archive's name, `unemupc-<version>-<triple>.tar.gz` |
 | `sha256`, `size` | the archive's SHA-256 and size in bytes |
@@ -60,11 +60,11 @@ Or build it from source, in a clean unemupc checkout at the pinned commit
 with no local changes, inside unemupc's devShell:
 
 ```sh
-UNEMUPC_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build -p cli --bin upcli
+UNEMUPC_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build -p upcli --bin upcli
 ```
 
-Without `UNEMUPC_SOURCE_COMMIT` the build prints no commit line and the
-pipeline refuses it.
+Without `UNEMUPC_SOURCE_COMMIT` the build prints no commit line (unemupc's
+`crates/platforms/src/lib.rs`, `commit_line`) and the pipeline refuses it.
 
 ### The version check
 
@@ -85,6 +85,35 @@ There is no option to skip it. Nothing else in the output is read.
    pin must still hold, or change deliberately with the reason in the
    commit.
 
+## Names and tags
+
+Since unemupc 0.0.3 every repository names the machine platform, `ibm-pc`,
+after its kind (its decision-35), and tags follow its decision-38:
+
+| Kind | Repository | Revision tag | Alias |
+| --- | --- | --- | --- |
+| media set | `unemu/media/ibm-pc/<work>` | `<release>-rN` (`freedos:1.4-r1`, `:1.4-720k-r1`) | `<release>` (`freedos:1.4`) |
+| firmware package | `unemu/firmware/ibm-pc/<catalogue id>` | `rN` (`r1`) | none |
+
+A tag that ends in `rN` names one set or package for ever and never moves.
+A set's release alone is an alias that names the newest revision of that
+release: the pipeline pushes it right after the revision, and upcli lets
+an alias onto the newest revision the registry holds only. Moving an alias
+to a newer revision takes `upcli image push --move`, which this pipeline
+never passes and does not support yet, so an alias that names another
+image is `refused` and the maintainer decides. No further revision is
+published before unemupc's first public release (its decision-32, point
+5), so a corrected set or package is not yet the next revision. Sets and
+packages have no `latest`, and everything upcli 0.0.3 writes declares
+`unemu.min-app-version` 0.0.3. upcli imports a set under the ref the
+manifest gives (`unemu/media/ibm-pc/freedos:1.4-r1`, and its store moves
+the alias with it), a package under `private/firmware/ibm-pc/<catalogue
+id>:r1`; every push names its `unemu/...` target explicitly.
+
+`upcli image push --dry-run` is local: it checks the guard, but no tag
+rule, which only a push checks on the registry. The pipeline derives every
+tag itself, and a manifest's tag is a revision tag of the grammar.
+
 ## The pipeline
 
 ```sh
@@ -98,11 +127,11 @@ python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
 | `--cli UPCLI` | the upcli binary; default `$UPCLI`; a name without a slash is looked up on `PATH` |
 | `--store DIR` | import into `DIR`, a new directory that is kept (default: a fresh store under `build/`, removed afterwards) |
 | `--experimental RUN` | push to the experimental targets (see below); `RUN` is the CI run id, from 1 |
-| `--skip-published` | read each pinned set's and package's own tag first; skip what the registry already serves (see below) |
+| `--skip-published` | read each pinned set's and package's own tag (and a set's alias) first; skip what the registry already serves (see below) |
 | `--no-build` | run no `build.sh`: the outputs must already be in `out/<recipe>/` and match their pins |
 | `--push` | push every checked set and package |
 | `--allow-unpinned` | let a dry run pass with sets or packages that have no digest pin yet; never with `--push` |
-| `RECIPE` or `REF` | select a recipe (`freedos-1.4-floppy`) or one set or package by its ref (`unemu/media/freedos:1.4`, `unemu/firmware/xub-r638-xtp-ata1f0:1`); default: everything |
+| `RECIPE` or `REF` | select a recipe (`freedos-1.4-floppy`) or one set or package by its ref (`unemu/media/ibm-pc/freedos:1.4-r1`, `unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1`; not an alias); default: everything |
 
 The registry host is `UNEMU_REGISTRY_HOST`, checked as upcli checks one (a
 name with a dot or a port, or `localhost`; no scheme or path). A dry run
@@ -113,19 +142,24 @@ anonymous reads of `--skip-published`.
 
 A set or package that fails a step is not taken further.
 
-1. `upcli.toml` is read, every recipe's manifest is checked, and no ref may
-   appear twice across them. A refusal stops the run.
+1. `upcli.toml` is read, every recipe's manifest is checked, and no ref,
+   nor a set's release alias, may appear twice across them. A refusal stops
+   the run.
 2. The version check (above).
 3. With `--skip-published`, each selected set or package that has a digest
-   pin is looked up under its own tag, `unemu/media/<work>:<tag>` or
-   `unemu/firmware/<id>:<revision>`, with `--experimental` too: an
-   anonymous read, as before a push. The pinned digest there makes it
-   `published`: it is not built, imported or pushed, and a recipe whose
-   selected sets and packages are all published is not built at all.
-   Another digest there makes it `refused`: a tag never moves, so it needs a
-   new tag (`-rN`) or revision. A missing tag goes on as usual, and so does
-   one without a pin, which cannot be compared and ends `unpinned`. A failed
-   read fails it.
+   pin is looked up under its own tag,
+   `unemu/media/ibm-pc/<work>:<release>-rN` or
+   `unemu/firmware/ibm-pc/<id>:rN`, with `--experimental` too, and a set
+   then under its own alias, `<release>`: anonymous reads, as before a
+   push. The pinned digest under both makes it `published`: it is not
+   built, imported or pushed, and a recipe whose selected sets and packages
+   are all published is not built at all. Another digest under its tag or
+   under the alias makes it `refused`: a revision tag never moves and the
+   pipeline never moves an alias, so the refusal says to stop and ask the
+   maintainer. A missing tag goes on as usual, and so does a
+   missing alias of a tag that serves the pin (the set is built again and
+   only the alias is pushed), and one without a pin, which cannot be
+   compared and ends `unpinned`. A failed read fails it.
 4. Each selected recipe's `build.sh` runs (it stops at once when its outputs
    already match their pins), and every output is checked against its pin.
    A recipe never sees a variable whose name starts with `UNEMU`,
@@ -141,29 +175,31 @@ A set or package that fails a step is not taken further.
    firmware import --for` and checked with `upcli image firmware show`,
    which must state the manifest's metadata, ROM, source archive and
    licences. Both shows must end by reporting it pushable to `unemu/`. Then
-   `upcli image push --dry-run`'s guard must allow the target. upcli runs
-   with an environment and a registries file of its own.
+   `upcli image push --dry-run`'s guard must allow the target, and a set's
+   alias target too. upcli runs with an environment and a registries file
+   of its own.
 6. The digest is compared with the manifest's pin.
 7. With `--push`, and only when everything selected passed and is pinned,
    each one that is not `published` is pushed (see below).
 
 ### Outcomes
 
-The run prints a table of repository, tag, digest, outcome and licence on
-stdout, and its progress on stderr.
+The run prints a table of repository, tag, alias (`-` for a package),
+digest, outcome and licence on stdout, and its progress on stderr.
 
 | Outcome | Meaning |
 | --- | --- |
 | `dry run` | checked, and the digest equals the manifest's pin |
-| `published` | `--skip-published`: its own tag already serves the pinned digest; not built, imported or pushed |
+| `published` | `--skip-published`: its own tag, and a set's alias, already serve the pinned digest; not built, imported or pushed |
 | `unpinned` | checked, but the manifest pins no digest; never pushed |
 | `mismatch` | upcli gives another digest than the pin |
 | `failed` | a build, check, import, guard, registry read or push failed |
 | `held` | not pushed, because another one failed or is unpinned, or an earlier push failed |
-| `pushed` | pushed, and read back with the same digest |
-| `present` | the registry already serves this digest under the tag |
-| `refused` | the registry holds another digest under the tag (the target before a push, or with `--skip-published` its own tag) |
-| `unconfirmed` | pushed, but the read-back failed or named another digest |
+| `pushed` | the tag or the alias pushed, and each read back with the same digest |
+| `present` | the registry already serves this digest under the tag and the alias |
+| `refused` | the registry holds another digest under the tag or the alias (the target before a push, or with `--skip-published` its own); stop and ask the maintainer |
+| `unconfirmed` | pushed, but a read-back failed or named another digest |
+| `partial` | the revision tag is on the registry with the digest (read back), but its alias push or the alias's read-back failed; the detail names the revision tag |
 
 The exit status is 0 when everything selected passed (and, with `--push`,
 is on the registry), 1 otherwise, 2 for a usage error. An `unpinned` row
@@ -190,15 +226,19 @@ What keeps a push safe:
 - **All or nothing.** Nothing is pushed unless every selected set and
   package passed and is pinned; after the first failure, the rest are
   `held`.
-- **An anonymous read first.** Before each push the target tag is read
-  anonymously over HTTPS (OCI and Docker manifest types). A 404 is
-  confirmed through the repository's tag list, and a tag the list names but
-  the read cannot see is refused. A redirect, a timeout or any other answer
-  stops the push.
-- **Tags never move.** A tag that already serves the same digest is skipped
-  (`present`, or `published` before anything is built with
-  `--skip-published`); one that serves another digest is `refused`. upcli
-  is never given `--move`, and the movable `latest` alias is not pushed.
+- **An anonymous read first.** Before a set or package is pushed, its
+  target tag and a set's target alias are read anonymously over HTTPS (OCI
+  and Docker manifest types). A 404 is confirmed through the repository's
+  tag list, and a tag the list names but the read cannot see is refused. A
+  redirect, a timeout or any other answer stops the push.
+- **Revision tags never move.** A tag or alias that already serves the
+  same digest is skipped (`present`, or `published` before anything is
+  built with `--skip-published`); either one serving another digest
+  refuses the set or package before anything of it is pushed. upcli is
+  never given `--move`, and sets and packages have no `latest`.
+- **The revision before its alias.** The revision tag is pushed and read
+  back first, then the alias, which upcli moves onto the newest revision
+  the registry has only.
 - **A read-back after.** Each push is read back anonymously and must serve
   the pushed digest.
 
@@ -224,12 +264,19 @@ bypass per-domain resolver settings.
 
 | Kind | Target | With `--experimental RUN` |
 | --- | --- | --- |
-| media set | `<host>/unemu/media/<work>:<media-tag>` | `<host>/unemu/experimental/media/<work>:<media-tag>.ci<RUN>` |
-| firmware package | `<host>/unemu/firmware/<id>:<revision>` | `<host>/unemu/experimental/firmware/<id>:<revision>.ci<RUN>` |
+| media set | `<host>/unemu/media/ibm-pc/<work>:<release>-rN`, alias `<release>` | `<host>/unemu/experimental/media/ibm-pc/<work>:<release>-ci<RUN>-rN`, alias `<release>-ci<RUN>` |
+| firmware package | `<host>/unemu/firmware/ibm-pc/<id>:rN` | `<host>/unemu/experimental/firmware/ibm-pc/<id>:ci<RUN>-rN` |
 
-The `.ci<RUN>` suffix is not part of the media tag or the package revision.
-An experimental repository longer than 255 bytes, or a tag longer than 128
-characters, is refused before anything is built.
+`ci<RUN>` becomes the last part of the tag's release, so every run pushes
+revision tags of its own, which never move, and a set's experimental alias
+is pushed after its revision as the official one is. Each run pushes fresh
+tags only: an experimental run is a first publication every time, so it
+never meets an alias that would have to move, as a later publication to
+`unemu/media/` can, and it meets an existing revision tag only when the
+same run is re-run, which finds its own tags. `ci<RUN>` lives in the tag
+only: the set's metadata keeps its own version and edition, and the package
+its revision. An experimental repository longer than 255 bytes, or a tag
+longer than 128 characters, is refused before anything is built.
 
 ## CI
 
@@ -244,15 +291,19 @@ too.
 
 ### The rule: only what changed, never what is published
 
-A set or package that the registry already serves under its own tag, with
-its pinned digest, is never built or pushed again by the workflows that
-publish (experimental and publish): both pass `--skip-published`, so
-FreeDOS and the firmware packages, once published, stay out of every later
-publication. The check workflow does rebuild a recipe, published or not,
-when the recipe or a shared input changes, and every week: that is a check,
-and it pushes nothing. A tag that serves another digest is `refused` and
-fails the run: a published tag never moves, so a corrected set needs a new
-tag (`-rN`), and a package the next revision.
+A set or package that the registry already serves under its own tag (and,
+for a set, its alias), with its pinned digest, is never built or pushed
+again by the workflows that publish (experimental and publish): both pass
+`--skip-published`, so FreeDOS and the firmware packages, once published,
+stay out of every later publication. The check workflow does rebuild a
+recipe, published or not, when the recipe or a shared input changes, and
+every week: that is a check, and it pushes nothing. A tag or alias that
+serves another digest is `refused` and fails the run: a published revision
+tag never moves, and the pipeline never moves an alias. Before unemupc's
+first public release no further revision is published and the maintainer
+decides. After it, a corrected package is its next revision (`r2`); a
+corrected set is its next revision (`1.4-r2`) once the pipeline can move
+the set's alias to it, and until then the maintainer decides.
 
 ### Which recipes a run takes
 
@@ -323,7 +374,9 @@ run waits for the one before it. Two jobs:
    `--skip-published --no-build --push`. No recipe code runs in this job:
    `--no-build` checks every pinned output's SHA-256 before the import, and
    the sets and packages are pushed to
-   `unemu/experimental/<kind>/<name>:<tag>.ci<RUN>`. The selection comes
+   `unemu/experimental/<kind>/ibm-pc/<name>:<release>-ci<RUN>-rN` (a
+   package's `ci<RUN>-rN`), each set with its alias `<release>-ci<RUN>`.
+   The selection comes
    from the build job's outputs, which its recipe code could forge; the
    most that buys is another choice of pinned, unpublished sets and
    packages pushed to `unemu/experimental/`, each still with its pinned

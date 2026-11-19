@@ -3,9 +3,10 @@
 #
 # The official FreeDOS 1.4 Floppy Edition, released by the FreeDOS Project on
 # 2025-04-02, and the corresponding source of every program on its disks, for
-# the sets of media.toml: unemu/media/freedos:1.4 (1.44M), :1.4-1.2m and
-# :1.4-720k. Ported from unemupc98's vendor/freedos/fetch-floppy-1.4.sh
-# (upc-5pw.68 (unemupc98)); the outputs are byte-identical to its pins.
+# the sets of media.toml: unemu/media/ibm-pc/freedos:1.4-r1 (1.44M),
+# :1.4-1.2m-r1 and :1.4-720k-r1. Ported from unemupc98's
+# vendor/freedos/fetch-floppy-1.4.sh (upc-5pw.68 (unemupc98)); the outputs
+# are byte-identical to its pins.
 #
 # Outputs, in out/freedos-1.4-floppy/:
 #   144m/, 120m/, 720k/        the edition's disk images, unmodified

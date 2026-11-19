@@ -85,7 +85,8 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 # A tag or a version: a plain name, safe in a URL path and a file name.
 NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
 # The line a release build's `upcli --version` names its commit on
-# (unemupc crates/cli/src/about.rs, commit_line): every line of stdout that
+# (unemupc crates/platforms/src/lib.rs, licence_notice and commit_line, from
+# UNEMUPC_SOURCE_COMMIT at compile time): every line of stdout that
 # starts with COMMIT_PREFIX counts, and it must be exactly COMMIT_LINE.
 COMMIT_PREFIX = "commit:"
 COMMIT_LINE = re.compile(r"commit: ([0-9a-f]{40})")
