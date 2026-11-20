@@ -1,0 +1,18 @@
+# Work metadata: Wikidata https://www.wikidata.org/wiki/Q47604
+# (retrieved 2026-11-20): label MS-DOS, developer Microsoft, instance of
+# operating system. The synopsis paraphrases its English description.
+# No release's hardware requirements are asserted for the whole work.
+
+recipe = "0.1"
+
+[work]
+id = "msdos"
+
+[title]
+title = "MS-DOS"
+developers = ["Microsoft"]
+genres = ["operating system"]
+synopsis = "An operating system developed by Microsoft."
+
+[ids]
+wikidata = "Q47604"

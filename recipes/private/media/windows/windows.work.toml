@@ -1,0 +1,20 @@
+# Work metadata: Wikidata https://www.wikidata.org/wiki/Q1406
+# (retrieved 2026-11-20): label Microsoft Windows, developer Microsoft,
+# description of a family of computer operating systems. The synopsis
+# paraphrases that description. Q1406 identifies the work across versions;
+# Q495432 (Windows 3.1) identifies a version, not this whole work.
+# No release's hardware requirements are asserted for the whole work.
+
+recipe = "0.1"
+
+[work]
+id = "windows"
+
+[title]
+title = "Microsoft Windows"
+developers = ["Microsoft"]
+genres = ["operating system"]
+synopsis = "A family of operating systems developed by Microsoft."
+
+[ids]
+wikidata = "Q1406"
