@@ -38,6 +38,15 @@ Python 3.11 or later; `nix develop` provides it. The dry run needs no
 credentials and never contacts a registry; it downloads the recipes' inputs
 from the URLs they pin, each checked by size and SHA-256.
 
+## What can I build from my files?
+
+`python3 -I lib/plan.py --cli out/upcli/upcli --library /path/to/files`
+surveys every recipe using your upcli libraries and local store: `ready`,
+`needs --fetch`, `missing` or `invalid`. It builds and downloads nothing.
+Give recipe files or folders to narrow the survey, or `--json` for JSON;
+the footer shows how to build and push to your own private registry.
+See [docs/recipes.md](docs/recipes.md#planning-from-local-files).
+
 ## Publishing
 
 `lib/publish.py --push` pushes only when every selected set and package

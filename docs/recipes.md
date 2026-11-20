@@ -147,6 +147,67 @@ nix develop --command bash recipes/media/freedos/source/build.sh
 # out/freedos-1.4-floppy-src/freedos-1.4-floppy-src.tar, as pinned
 ```
 
+## Planning from local files
+
+`lib/plan.py` surveys every `*.media.toml` and `*.firmware.toml` under
+`recipes/`, or the files and folders given, by running the supplied
+upcli's `recipe plan FILE --json` once per recipe. It accepts private
+recipes outside this repository too; the publication restrictions of
+`lib/recipes.py` do not apply. Python 3.11 or later is required.
+
+```sh
+python3 -I lib/plan.py --cli out/upcli/upcli --library /path/to/files
+python3 -I lib/plan.py --cli out/upcli/upcli recipes/firmware --json
+python3 -I lib/plan.py --cli out/upcli/upcli recipes/media/kenslab \
+  --library /path/to/files --store /path/to/store --config /path/to/preferences.toml
+```
+
+`--cli` defaults to `$UPCLI`. Unlike the publishing pipeline, the survey
+keeps your HOME and upcli preferences, including registered libraries;
+`--config FILE` chooses another preferences file. `--library DIR` is
+repeatable and adds to those libraries, and `--store DIR` chooses an
+existing store. upcli searches by size and SHA-256, including zip members,
+the store and its download cache, bundled files beside the recipe, and
+libraries. The survey builds and downloads nothing, changes no images and
+contacts no registry. **Cache limitation:** upcli 0.0.3 may update its
+library and decoded-content index caches in an existing store as its own
+bookkeeping; it has no option to disable those writes. The wrapper itself
+writes only its report to stdout. It keeps `LC_ALL=C` and `TZ=UTC`.
+
+Each row names the recipe and its revision ref, with one of these statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `ready` | Every needed input is local, or found members or locked output payloads replace the inputs that would make them. |
+| `needs --fetch` | Every missing required input has URLs; a build can try them with `--fetch`. Their availability is not tested. |
+| `missing` | At least one required input has neither a local copy nor URLs; its name, size, SHA-256 and any dump-database ids are listed. |
+| `invalid` | upcli refused the recipe (the first three findings are shown), or returned an unusable plan. |
+
+Missing optional attachments do not prevent `ready`. A survey exits 0
+even with missing or invalid recipes; usage errors and inability to run
+upcli are nonzero. `--json` prints an array of rows (`recipe`, `refs`,
+`status`, `missing`, `findings`, `summary`, `warnings`) without the footer.
+`missing` holds the required inputs still needed, with their `input` id,
+`name`, `size`, `sha256`, dump `ids` and `urls`; file sets list their missing
+files individually. upcli's store and library read warnings are retained.
+
+The text footer gives a build command with the survey's library, store and
+config options, and a push command targeting `private/...` on your own
+registry. For example, after a `ready` Ken's Labyrinth row:
+
+```sh
+out/upcli/upcli recipe build recipes/media/kenslab/kenslab-2.01.media.toml \
+  --library /path/to/files --store /path/to/store
+out/upcli/upcli image push unemu/media/ibm-pc/kenslab:2.01-r1 \
+  private/media/ibm-pc/kenslab:2.01-r1 --registry registry.example \
+  --store /path/to/store --config /path/to/preferences.toml
+```
+
+These are commands for you to run: the survey never runs them. The push
+uses your registry configuration and authentication; the recipe's local
+`unemu/...` ref does not select a registry. A `ready` plan describes local
+availability, while the build still verifies bytes and the recipe lock.
+
 ## The lock
 
 `upcli recipe pin FILE` is the author's build: it builds the recipe as a
