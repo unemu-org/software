@@ -1,4 +1,4 @@
-# unemu-media
+# software
 
 Reproducible builds of the open installation media sets
 (`unemu/media/ibm-pc/<work>:<release>-rN`) and open firmware packages

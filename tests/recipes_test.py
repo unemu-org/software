@@ -309,7 +309,7 @@ class Repository(unittest.TestCase):
                 source = tomllib.loads((ROOT / recipe.path).read_text(encoding="utf-8"))["input"]["source"]
                 self.assertEqual((source["name"], source["size"], source["sha256"]), (name, size, sha256))
                 self.assertEqual(source["urls"], [
-                    f"https://github.com/unemu-org/unemu-media/releases/download/freedos-1.4-floppy/{name}"])
+                    f"https://github.com/unemu-org/software/releases/download/freedos-1.4-floppy/{name}"])
 
     def test_the_media_work_files_and_needs_state_only_cited_kinds(self):
         # The maintainer's rule (2026-11-19): needs only as the upstream

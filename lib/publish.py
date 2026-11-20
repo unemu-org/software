@@ -225,7 +225,7 @@ MAX_TAG_PAGES = 20
 SOCKET_TIMEOUT = 30
 REQUEST_DEADLINE = 120
 NEXT_LINK = re.compile(r'\s*<([^>]*)>\s*;\s*rel="?next"?\s*')
-USER_AGENT = "unemu-media-publish"
+USER_AGENT = "unemu-software-publish"
 
 
 class Failure(Exception):

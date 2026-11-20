@@ -1,4 +1,4 @@
-# AGENTS.md — unemu-media
+# AGENTS.md — software
 
 Repo-specific notes for coding agents. Generic software-engineering advice is out of scope.
 

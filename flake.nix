@@ -1,5 +1,5 @@
 {
-  description = "unemu-media: reproducible builds of the open installation media sets and firmware packages of the unemu emulators";
+  description = "software: reproducible builds of the open installation media sets and firmware packages of the unemu emulators";
 
   # The same nixpkgs revision as unemupc98's devShell and unemu-at-bios. The
   # recipes need none of it (upcli builds them); the FreeDOS source archive's
