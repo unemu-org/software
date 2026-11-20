@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The checks of every pull request and every push to main, and a weekly cold
-# run: the README's check command, then each recipe the change touches
-# (lib/changed.py) built twice from scratch with identical bytes, and the
-# publish pipeline's dry run over it. No secrets, no environment, no registry
-# write: fork pull requests run all of it. See docs/publishing.md.
+# run: the README's check command; upcli's check of every recipe, which
+# refuses drift and drafts too; each recipe the change touches
+# (lib/changed.py) built against its lock from downloads, then built again
+# from those inputs alone by upcli's conformance run; and, when its inputs
+# change and every week, the script that makes the FreeDOS source archive.
+# No secrets, no environment, no registry read or write: fork pull requests
+# run all of it. See docs/publishing.md.
 
 name: check
 
@@ -13,8 +16,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # Mondays: every recipe, cold (no download cache), to catch vanished
-    # mirrors and host drift.
+    # Mondays: every recipe and script, cold (no download cache), to catch
+    # vanished mirrors and host drift.
     - cron: "23 5 * * 1"
   workflow_dispatch:
 
@@ -27,18 +30,18 @@ concurrency:
   group: check-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-defaults:
-  run:
-    # Every step in the pinned devShell.
-    shell: nix develop --command bash -euo pipefail {0}
-
 jobs:
   tests:
     name: tests and selection
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        # Every step in the pinned devShell.
+        shell: nix develop --command bash -euo pipefail {0}
     outputs:
       recipes: ${{ steps.select.outputs.recipes }}
+      sources: ${{ steps.select.outputs.sources }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,20 +52,13 @@ jobs:
 
       - name: The README's check command
         run: |
-          shellcheck -x lib/recipe.sh tests/*.sh recipes/*/build.sh
-          bash tests/recipe-selftest.sh
-          python3 -I tests/manifest_test.py
-          python3 -I tests/publish_test.py
-          python3 -I tests/upcli_test.py
-          python3 -I tests/iso_extract_test.py
-          python3 -I tests/changed_test.py
-          for m in tests/fixtures/*/media.toml tests/fixtures/*/firmware.toml \
-              recipes/*/media.toml recipes/*/firmware.toml; do
-            python3 -I lib/manifest.py check "$m"
+          shellcheck -x lib/source.sh tests/*.sh recipes/*/*/source/build.sh
+          bash tests/source-selftest.sh
+          for test in tests/*_test.py; do
+            python3 -I "$test"
           done
-          python3 -I lib/manifest.py refs recipes/*/media.toml recipes/*/firmware.toml
 
-      - name: Select the recipes
+      - name: Select the recipes and scripts
         id: select
         env:
           EVENT: ${{ github.event_name }}
@@ -70,73 +66,169 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           case "$EVENT" in
-            pull_request) recipes="$(python3 -I lib/changed.py --json "$PR_BASE" HEAD)" ;;
-            push) recipes="$(python3 -I lib/changed.py --json "$BEFORE" HEAD)" ;;
-            *) recipes="$(python3 -I lib/changed.py --json --all)" ;;
+            pull_request) range=("$PR_BASE" HEAD) ;;
+            push) range=("$BEFORE" HEAD) ;;
+            *) range=(--all) ;;
           esac
-          echo "selected: $recipes"
+          recipes="$(python3 -I lib/changed.py --json "${range[@]}")"
+          sources="$(python3 -I lib/changed.py --json --sources "${range[@]}")"
+          echo "recipes: $recipes"
+          echo "scripts: $sources"
           echo "recipes=$recipes" >> "$GITHUB_OUTPUT"
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: build ${{ matrix.recipe }}
+  recipes:
+    name: recipes
     needs: tests
-    if: needs.tests.outputs.recipes != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        recipe: ${{ fromJSON(needs.tests.outputs.recipes) }}
+    defaults:
+      run:
+        # The runner's own bash and Python: upcli builds the recipes, and
+        # nothing of them needs Nix.
+        shell: bash -euo pipefail {0}
     env:
-      RECIPE: ${{ matrix.recipe }}
+      SELECTION: ${{ needs.tests.outputs.recipes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Python 3.11 or later
+        run: |
+          python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else
+            "lib/ needs Python 3.11 or later (tomllib); this runner has " + sys.version.split()[0])'
+
+      - name: Fetch the pinned upcli
+        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+
+      # Every recipe, whatever the selection: a finding, drift (a work file
+      # that differs from a lock) or a draft fails the check.
+      - name: Check every recipe
+        run: python3 -I lib/recipes.py check --cli "$RUNNER_TEMP/upcli/upcli"
+
+      # Downloads only, by SHA-256; upcli checks every input it takes from
+      # here against its pin, so the cache never decides a byte. The weekly
+      # run goes without it.
+      - name: Download cache
+        if: env.SELECTION != '[]' && github.event_name != 'schedule'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: inputs
+          key: inputs-${{ hashFiles('recipes/**/*.media.toml', 'recipes/**/*.firmware.toml') }}
+          restore-keys: inputs-
+
+      # Each selected recipe built into a fresh store: upcli downloads what
+      # is missing from the URLs its recipe pins, builds every byte and
+      # compares it with the lock; then the show, the guard's dry run and
+      # the digest pin (lib/publish.py's dry run, which reads no registry).
+      - name: Build the selected recipes against their locks
+        if: env.SELECTION != '[]'
+        run: |
+          python3 -I -c 'import json, sys; print(end="".join(s + "\0" for s in json.loads(sys.argv[1])))' \
+            "$SELECTION" > "$RUNNER_TEMP/selection"
+          mapfile -d '' -t recipes < "$RUNNER_TEMP/selection"
+          [ "${#recipes[@]}" -gt 0 ]
+          # Every cached file is named by its SHA-256; one whose bytes are
+          # not that is dropped, so the cache never keeps it.
+          prune() {
+            local file
+            for file in inputs/*; do
+              [ -e "$file" ] || continue
+              if [ -L "$file" ] || [ ! -f "$file" ] \
+                || [ "$(sha256sum < "$file" | cut -d' ' -f1)" != "$(basename -- "$file")" ]; then
+                echo "dropped $file: not the file its name pins"
+                rm -f -- "$file"
+              fi
+            done
+          }
+          mkdir -p inputs
+          prune
+          status=0
+          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --fetch --library inputs \
+            --store "$RUNNER_TEMP/store-1" -- "${recipes[@]}" > "$RUNNER_TEMP/summary.txt" || status=$?
+          cat "$RUNNER_TEMP/summary.txt"
+          {
+            echo "### Dry run"
+            echo '```'
+            cat "$RUNNER_TEMP/summary.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -d "$RUNNER_TEMP/store-1/cache/downloads" ]; then
+            find "$RUNNER_TEMP/store-1/cache/downloads" -maxdepth 1 -type f -name '[0-9a-f]*' \
+              -exec cp -f -t inputs/ {} +
+          fi
+          prune
+          exit "$status"
+
+      # The same recipes built again in a scratch store, from the inputs
+      # alone (no download, nothing found instead of made): every step runs
+      # again and must give the pinned digest.
+      - name: Build them again from the inputs alone
+        if: env.SELECTION != '[]'
+        run: |
+          mapfile -d '' -t recipes < "$RUNNER_TEMP/selection"
+          mkdir "$RUNNER_TEMP/home"
+          HOME="$RUNNER_TEMP/home" LC_ALL=C TZ=UTC "$RUNNER_TEMP/upcli/upcli" recipe conformance \
+            "${recipes[@]}" --library inputs --store "$RUNNER_TEMP/store-2"
+
+  source:
+    name: prepared inputs
+    needs: tests
+    if: needs.tests.outputs.sources != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        # The scripts run in the pinned devShell.
+        shell: nix develop --command bash -euo pipefail {0}
+    env:
+      SCRIPTS: ${{ needs.tests.outputs.sources }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
 
-      # Downloads only; every recipe checks each cached file against its pin
-      # before use, so a cache never decides a byte. The weekly run goes
-      # without it.
+      # The scripts check every cached file against its pin.
       - name: Download cache
         if: github.event_name != 'schedule'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: cache/${{ matrix.recipe }}
-          key: downloads-${{ matrix.recipe }}-${{ hashFiles(format('recipes/{0}/**', matrix.recipe), 'lib/**', 'flake.lock') }}
+          path: cache
+          key: sources-${{ hashFiles('recipes/**/source/**', 'lib/source.sh', 'flake.lock') }}
 
-      - name: Build twice from scratch and compare
+      # Each script builds its input from scratch and stops unless the
+      # result has its pin, the recipes' pin.
+      - name: Make the prepared inputs
         run: |
-          first="$RUNNER_TEMP/first-build"
-          rm -rf -- "out/$RECIPE" build "$first"
-          bash "recipes/$RECIPE/build.sh"
-          mv -- "out/$RECIPE" "$first"
-          rm -rf -- build
-          bash "recipes/$RECIPE/build.sh"
-          diff -r --no-dereference -- "$first" "out/$RECIPE"
-          echo "two builds from scratch gave the same bytes"
+          python3 -I -c 'import json, sys; print(end="".join(s + "\0" for s in json.loads(sys.argv[1])))' \
+            "$SCRIPTS" > "$RUNNER_TEMP/scripts"
+          mapfile -d '' -t scripts < "$RUNNER_TEMP/scripts"
+          rm -rf -- out build
+          for script in "${scripts[@]}"; do
+            bash "$script"
+          done
 
       - name: Fetch the pinned upcli
         run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
 
-      - name: Dry run
+      # The recipes beside each script, built with what the script made (a
+      # library, found before any URL): the asset the recipes download is
+      # the archive the script makes.
+      - name: Build the recipes from the prepared inputs
         run: |
-          status=0
-          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" -- "$RECIPE" \
-            > "$RUNNER_TEMP/summary.txt" || status=$?
-          cat "$RUNNER_TEMP/summary.txt"
-          {
-            echo "### Dry run of $RECIPE"
-            echo '```'
-            cat "$RUNNER_TEMP/summary.txt"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+          mapfile -d '' -t scripts < "$RUNNER_TEMP/scripts"
+          folders=()
+          for script in "${scripts[@]}"; do
+            folders+=("$(dirname -- "$(dirname -- "$script")")")
+          done
+          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --fetch --library out -- "${folders[@]}"
 
-  # One status to require: every job above passed, or nothing was selected.
+  # One status to require: every job above passed, or was not needed.
   result:
     name: check result
-    needs: [tests, build]
+    needs: [tests, recipes, source]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -145,7 +237,9 @@ jobs:
         shell: bash
         env:
           TESTS: ${{ needs.tests.result }}
-          BUILD: ${{ needs.build.result }}
+          RECIPES: ${{ needs.recipes.result }}
+          SOURCE: ${{ needs.source.result }}
         run: |
-          echo "tests: $TESTS, build: $BUILD"
-          [ "$TESTS" = success ] && { [ "$BUILD" = success ] || [ "$BUILD" = skipped ]; }
+          echo "tests: $TESTS, recipes: $RECIPES, prepared inputs: $SOURCE"
+          [ "$TESTS" = success ] && [ "$RECIPES" = success ] \
+            && { [ "$SOURCE" = success ] || [ "$SOURCE" = skipped ]; }

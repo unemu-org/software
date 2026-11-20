@@ -1,8 +1,9 @@
 {
-  description = "unemu-media: reproducible builds of the open installation media sets of the unemu emulators";
+  description = "unemu-media: reproducible builds of the open installation media sets and firmware packages of the unemu emulators";
 
-  # The same nixpkgs revision as unemupc98's devShell and unemu-at-bios, so the
-  # tools that shape image bytes (mtools above all) match the emulator's fixtures.
+  # The same nixpkgs revision as unemupc98's devShell and unemu-at-bios. The
+  # recipes need none of it (upcli builds them); the FreeDOS source archive's
+  # script does, and GNU tar, unzip and git here gave its pinned bytes.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/d407951447dcd00442e97087bf374aad70c04cea";
 
   outputs = { self, nixpkgs }:
@@ -16,7 +17,6 @@
           packages = [
             pkgs.curl.bin
             pkgs.unzip
-            pkgs.mtools
             pkgs.gnutar
             pkgs.zstd
             pkgs.python3

@@ -12,9 +12,10 @@ on the family's registry. The repository also builds the **open firmware package
 of unemupc's machine templates, published to `unemu/firmware/ibm-pc/<catalogue id>`: each
 ROM and its source archive come from the release assets of the unemu-org forks,
 pinned and unmodified. The consumer is **unemupc** (an IBM PC/AT-class emulator;
-CLI `upcli`, beads prefix `upc`), whose `image media import` and `image firmware
-import`, template build and push guard define the set and package formats and the
-publication rules. See `README.md`.
+CLI `upcli`, beads prefix `upc`), whose recipe files (`upcli recipe check`, `pin`,
+`build`, `conformance`), importers and push guard define the set and package formats
+and the publication rules. Every set and package is a upcli recipe file in
+`recipes/` with its lock; see `README.md` and `docs/recipes.md`.
 
 ## Language
 
@@ -51,8 +52,11 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
   for its ROM and, for copyleft firmware, its corresponding source archive attached.
   When in doubt, the set or package is not published.
 - **Reproducible**: the same recipe gives the same images, archives and set digests
-  on every run and host; no wall clock, no locale or user-config dependence (run
-  mtools with an empty HOME, LC_ALL pinned, TZ=UTC).
+  on every run and host; no wall clock, no locale or user-config dependence. A recipe
+  is pinned with the upcli of `upcli.toml` (`upcli recipe pin`: its `digest` and its
+  lock) and every build is checked against that lock; run upcli with a fresh HOME,
+  LC_ALL=C and TZ=UTC. The one script that makes a prepared input (the FreeDOS
+  source archive) runs in `nix develop` and checks its output against its pin.
 - **Publication rule**: write as if public; no private hosts, paths or personal
   setup; never create or publish a repository, which is the maintainer's step.
   Pushing sets to the registry is the maintainer's step unless granted for a session.
@@ -60,10 +64,13 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
 ## Quick loop
 
 ```sh
-nix develop        # pinned curl, unzip, mtools, CA roots, python3
+python3 -I lib/upcli.py fetch out/upcli        # the pinned upcli, verified
+python3 -I lib/recipes.py check --cli out/upcli/upcli
+python3 -I lib/publish.py --cli out/upcli/upcli --fetch   # build all, dry run
+nix develop        # pinned curl, unzip, git, GNU tar, CA roots, python3, shellcheck
 ```
 
-The recipes, the set builder and the checks are being set up; see `bd ready`.
+Open work: `bd ready`.
 
 <!-- Beads integration is added below by bd init. -->
 

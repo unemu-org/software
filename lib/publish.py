@@ -1,19 +1,29 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Build the media sets and firmware packages, import them with the pinned
-unemupc CLI (upcli) into a scratch store, check them, and push them only when
+"""Build the media sets and firmware packages from their recipes with the
+pinned unemupc CLI (upcli) into a store, check them, and push them only when
 asked.
 
-    python3 -I lib/publish.py --cli UPCLI [--store DIR] [--experimental RUN]
-                              [--skip-published] [--no-build]
-                              [--push | --allow-unpinned] [RECIPE|REF]...
+    python3 -I lib/publish.py --cli UPCLI [--store DIR] [--fetch] [--library DIR]...
+                              [--no-build] [--experimental RUN] [--skip-published]
+                              [--push] [--report FILE] [RECIPE|FOLDER|REF]...
 
     --cli UPCLI         the upcli binary of the unemupc release in
                         upcli.toml (lib/upcli.py fetch), or one built at its
                         commit (default: the UPCLI environment variable; a
                         name without a slash is looked up on PATH)
-    --store DIR         import into DIR, a new directory kept afterwards
+    --store DIR         build into DIR, a new directory kept afterwards
                         (default: a fresh store under build/, removed
-                        afterwards)
+                        afterwards); with --no-build, the existing store an
+                        earlier run built
+    --fetch             let `upcli recipe build` download a missing input
+                        from the URLs its recipe pins (its consent)
+    --library DIR       a folder where `upcli recipe build` looks for inputs
+                        by size and SHA-256 (repeatable)
+    --no-build          build nothing: every selected set and package must
+                        already be in --store under its own tag, every blob
+                        of it checked here against the digest; this is how
+                        a CI job that holds credentials pushes what a job
+                        without them built
     --experimental RUN  target <host>/unemu/experimental/media/ibm-pc/<work>:
                         <release>-ci<RUN>-rN (and its alias <release>-ci<RUN>)
                         and <host>/unemu/experimental/firmware/ibm-pc/<id>:
@@ -26,68 +36,65 @@ asked.
                         with --experimental too) anonymously first, and a
                         set's alias: one that already serves the pinned
                         digest under both is `published` and is neither
-                        built, imported nor pushed; one that serves another
-                        digest is `refused`
-    --no-build          run no build.sh: the outputs must already be in
-                        out/<recipe>/ and match their pins
+                        built nor pushed; one that serves another digest is
+                        `refused` (with --experimental: noted, and built
+                        and pushed to its experimental tags)
     --push              push every checked set and package; without it
                         nothing is written to any registry, and nothing is
                         read from one unless --skip-published asks
-    --allow-unpinned    a dry run that passes with sets or packages whose
-                        manifest pins no digest yet (to measure a new
-                        recipe's digests); never with --push
-    RECIPE|REF          a recipe (recipes/<recipe>/), one set's ref
-                        (unemu/media/ibm-pc/<work>:<release>-rN) or one
-                        package's ref (unemu/firmware/ibm-pc/<id>:rN);
-                        default: every recipe
+    --report FILE       also write the summary's rows to FILE as JSON
+    RECIPE|FOLDER|REF   a recipe file (recipes/media/freedos/freedos-1.4.media.toml),
+                        a folder of recipes (recipes/media/freedos), or one
+                        set's or package's ref (unemu/media/ibm-pc/freedos:1.4-r1,
+                        unemu/firmware/ibm-pc/<id>:r1); default: every recipe
 
-Tags follow unemupc's decision-38: a tag that ends in rN names one set or
-package for ever and never moves; a set's release alone (1.4 of 1.4-r1) is
-an alias that names its newest revision, and the pipeline pushes it after
-the revision; a package tag names no release and has no alias. Sets and
-packages have no `latest`.
+A recipe (lib/recipes.py, docs/recipes.md) is a recipe file of upcli: one
+set or package, its ref <repository>:<tag> from its identity table. Tags
+follow unemupc's decision-38: a tag that ends in rN names one set or package
+for ever and never moves; a set's release alone (1.4 of 1.4-r1) is an alias
+that names its newest revision, and the pipeline pushes it after the
+revision; a package tag names no release and has no alias. Sets and
+packages have no `latest`. The steps, in order; a set or package that fails
+one is not taken further:
 
-Each recipe has one manifest: media.toml, the sets of an installation media
-release, or firmware.toml, one firmware package (lib/manifest.py). The
-steps, in order; a set or package that fails one is not taken further:
-
- 1. Every recipe's manifest checked as `manifest.py check` does, and every
-    ref as `manifest.py refs` does across all of them (the same functions,
-    called here). A refusal stops the run before anything else.
- 2. With --skip-published, for each selected set or package with a digest
+ 1. Every recipe file read (lib/recipes.py): its identity, and no ref or
+    alias named twice. A refusal stops the run before anything else.
+ 2. The version check of upcli (below), then `upcli recipe check` over every
+    recipe: a finding stops the run; drift is reported and is no refusal
+    here, as a build writes the lock's record (CI refuses it,
+    lib/recipes.py check).
+ 3. With --skip-published, for each selected set or package with a digest
     pin, an anonymous HTTPS read of its own tag on the registry
     (anonymous_digest, as before a push), whatever the target, and of a
     set's own alias once its tag serves the pin: a tag (and alias) that
-    serves the pinned digest is `published` and goes no further, so a
-    recipe whose sets and packages are all published is not built; a tag
-    or alias that serves another digest is `refused` (a revision tag never
+    serves the pinned digest is `published` and goes no further; a tag or
+    alias that serves another digest is `refused` (a revision tag never
     moves, an alias is never moved here, and no next revision is published
     for now: the maintainer decides); a missing tag, or a missing alias of
-    a published tag, goes on and is pushed. A read that fails fails the
-    set or package. One without a pin cannot be compared: it goes on, and
-    ends `unpinned` as below.
- 3. Each selected recipe's build.sh (whose fast path stops at once when its
-    outputs already match their pins), then every output of the recipe
-    checked here against its pin. With --no-build no build.sh runs: the
-    outputs must already be in out/<recipe>/ with their pinned hashes, or
-    the recipe's sets and packages fail. This is how a CI job that holds
-    credentials, and runs no recipe code, pushes what a job without them
-    built.
- 4. Each set imported with `upcli image media import` (the arguments are
-    manifest.import_arguments), then checked with `upcli image media show`;
-    each package imported with `upcli image firmware import --for` (the
-    arguments are manifest.firmware_import_arguments), then checked with
-    `upcli image firmware show`: its title, vendor, version, description,
-    labels, ROM, source archive and every layer's licence must be the
-    manifest's. Either show's last line must report it pushable to unemu/.
-    Then `upcli image push --dry-run` against the target, and a set's
-    against its alias too, whose guard must say allowed. All run offline;
-    the dry run checks no tag rule, which only a push does on the registry.
-    The import, the show and the dry runs must name the same store tag,
-    targets and digest.
- 5. The digest compared with the manifest's digest pin: another digest fails
-    the run. One without a pin is reported with its digest, is never
-    pushed, and fails the run unless --allow-unpinned is given.
+    a published tag, goes on and is pushed. A read that fails fails the set
+    or package. A draft cannot be compared: it goes on, and ends
+    `unpinned`. With --experimental, another digest under the official tag
+    or alias refuses nothing: the set or package goes on to its
+    experimental tags, and its row's detail notes what the official tag
+    still serves, so a replacement can be tested before the maintainer
+    deletes the old one.
+ 4. Each set or package built with `upcli recipe build FILE --store STORE`
+    (with --fetch and --library as given), which checks every byte it makes
+    against the recipe's lock and tags only the locked artifact; a draft is
+    built as a draft. With --no-build nothing is built: the store (an OCI
+    layout an earlier job built) must name the ref, and before upcli reads
+    it, the manifest it names and every blob that manifest names are
+    checked here against their digests and sizes and copied into a clean
+    store, the only one upcli reads (take_from_store), and the
+    manifest's digest against the recipe's pin. Then `upcli image media
+    show` or `image firmware show` of the ref must name it with the digest
+    and report it pushable to unemu/, and `upcli image push --dry-run`
+    against the target, and a
+    set's alias target, must say the guard allows it. All offline; the dry
+    run checks no tag rule, which only a push does on the registry.
+ 5. The digest compared with the recipe's digest pin: another digest is a
+    `mismatch`; a draft is `unpinned` and is never pushed. Either fails the
+    run.
  6. With --push, and only when everything selected passed and is pinned:
     for each that is not `published`, an anonymous HTTPS read of the target
     tag, and of a set's target alias, on the registry first
@@ -114,13 +121,12 @@ without it names the family default registry.unemu.dev, which it contacts
 only for the anonymous reads of --skip-published; a push needs it set. A
 push takes its credentials only from the environment, UNEMU_REGISTRY_USER
 and UNEMU_REGISTRY_PASSWORD, and hands them to the upcli push alone,
-through its environment: never on a command line, never to a recipe, never
-to another upcli command. A recipe gets the caller's environment without
-any variable whose name starts with UNEMU, GITHUB_, RUNNER_ or ACTIONS_, is
-BASH_ENV or ENV, or contains PASSWORD, TOKEN, SECRET or CREDENTIAL. upcli
-runs with an environment of its own (PATH, a fresh HOME and TMPDIR in the
-run's work directory, LC_ALL=C, TZ=UTC) and a registries file of its own:
-the target host, public, unemu/ only.
+through its environment: never on a command line, never to another upcli
+command. upcli runs with an environment of its own (PATH, a fresh HOME and
+TMPDIR in the run's work directory, LC_ALL=C, TZ=UTC) and a registries file
+of its own: the target host, public, unemu/ only. A recipe is data: no step
+of it starts a process, and every input it takes is checked by size and
+SHA-256 before use.
 
 The CLI pin is the unemupc release in upcli.toml (lib/upcli.py). Before
 anything is built, `upcli --version` runs once, and its commit line, the
@@ -129,11 +135,9 @@ one line `commit: <40 lower-case hex digits>`, must name the pinned commit
 failed --version, or none at all, refuses the run. A release build prints
 that line; a source build prints it only when built with
 UNEMUPC_SOURCE_COMMIT set to the commit, and is refused without it. There
-is no way around this check, for a dry run either. The digest pins remain
-the real check that the CLI builds the sets and packages this repository
-pins.
+is no way around this check, for a dry run either.
 
-Standard library only. Run it with -I; it finds lib/manifest.py and
+Standard library only. Run it with -I; it finds lib/recipes.py and
 lib/upcli.py next to itself.
 """
 
@@ -176,23 +180,13 @@ def _module(name):
     return module
 
 
-manifest = _module("manifest")
+recipes = _module("recipes")
 upcli = _module("upcli")
 
 CLI_ENV = "UPCLI"
 USER_ENV = "UNEMU_REGISTRY_USER"
 PASSWORD_ENV = "UNEMU_REGISTRY_PASSWORD"
 HOST_ENV = "UNEMU_REGISTRY_HOST"
-# What a recipe never sees: every UNEMU... variable (the registry pair and
-# host, UNEMU_REGISTRY, upcli's default-host override, and UNEMUPC_*),
-# anything that looks like a secret, and what would let it reach past its
-# own run on a CI runner: the GitHub Actions files and settings (GITHUB_ENV,
-# GITHUB_PATH, GITHUB_OUTPUT, GITHUB_STATE, RUNNER_TEMP, ACTIONS_*) and the
-# start-up files of bash and sh (BASH_ENV, ENV). upcli gets the pair and
-# the host only for a push.
-RECIPE_HIDDEN_PREFIXES = ("UNEMU", "GITHUB_", "RUNNER_", "ACTIONS_")
-RECIPE_HIDDEN_NAMES = ("BASH_ENV", "ENV")
-RECIPE_HIDDEN_WORDS = ("PASSWORD", "TOKEN", "SECRET", "CREDENTIAL")
 # upcli's family default registry (image_registry::reference::DEFAULT_REGISTRY).
 DEFAULT_HOST = "registry.unemu.dev"
 # Every repository lives in unemu/; an experimental target puts
@@ -203,16 +197,15 @@ DEFAULT_HOST = "registry.unemu.dev"
 # <release>-ci<RUN>, pushed as the official alias is.
 OFFICIAL_PREFIX = "unemu/"
 EXPERIMENTAL_PREFIX = "unemu/experimental/"
-# A recipe's manifest: media.toml or firmware.toml, by kind.
-MANIFEST_FILES = tuple(manifest.MANIFEST_NAMES)
 PIN_FILE = upcli.PIN_FILE
 RUN = re.compile(r"[1-9][0-9]{0,19}")
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 # What `upcli image media show` and `upcli image firmware show` say last of
 # a set or package the guard lets into unemu/.
 PUSHABLE = "push\tany configured registry, including unemu/"
-# The licence of a package's config and README layers
-# (pc_image::firmware::METADATA_LICENSE).
-FIRMWARE_METADATA_LICENSE = "CC0-1.0"
+# What `upcli recipe build` says last: built or already built, the ref, the
+# digest, and locked (a pinned recipe, built from its lock) or draft.
+BUILT = re.compile(r"(?:already )?built ([^\t]+)\t(sha256:[0-9a-f]{64})\t(locked|draft)")
 # The manifest types the anonymous read accepts: upcli pushes an OCI image
 # manifest; anything else at the tag (an index, a Docker schema 2 manifest
 # or list) is read too, and refused by its digest. A registry that cannot
@@ -245,13 +238,11 @@ class RegistryError(Exception):
 
 @dataclasses.dataclass
 class Item:
-    """One selected set or package (a manifest.Artifact) and what became of
+    """One selected set or package (a recipes.Recipe) and what became of
     it; REPOSITORY, TAG and ALIAS (a set's, None for a package) are its
     target's."""
 
-    recipe: str
-    checked: object
-    artifact: object
+    recipe: object
     repository: str
     tag: str
     alias: str | None = None
@@ -262,14 +253,21 @@ class Item:
 
     @property
     def ref(self):
-        """The set's or package's own ref, unemu/<kind>/ibm-pc/<name>:<tag>."""
-        return self.artifact.ref
+        """The set's or package's own ref, unemu/<kind>/ibm-pc/<name>:<tag>,
+        which is also its tag in the store."""
+        return self.recipe.ref
 
     @property
     def store_tag(self):
-        """Its tag in the scratch store: a set's ref, a package's
-        private/firmware/ibm-pc/<id>:r1."""
-        return self.artifact.store_tag
+        return self.recipe.ref
+
+    @property
+    def kind(self):
+        return self.recipe.kind
+
+    @property
+    def license(self):
+        return self.recipe.license or "-"
 
     def tags(self):
         """The target's tags to push, in order: the revision tag, then a
@@ -529,6 +527,8 @@ def run_cli(cli, args, env):
                               env=env, check=False)
     except OSError as error:
         raise Failure(f"cannot run {cli}: {error.strerror or error}") from None
+    except UnicodeDecodeError:
+        raise Failure(f"upcli {' '.join(args[:2])}: output that is not UTF-8") from None
 
 
 def last_line(text):
@@ -552,201 +552,182 @@ def describe(error):
 # --- the steps ----------------------------------------------------------------
 
 
-def stream():
-    """The file descriptor a child's output goes to (stderr), or None when
-    stderr has none (output is then captured and copied)."""
-    try:
-        sys.stderr.flush()
-        return sys.stderr.fileno()
-    except (AttributeError, OSError, ValueError):
-        return None
-
-
-def recipe_environment(environ):
-    """The caller's environment without anything named UNEMU... (the
-    registry variables among them), GITHUB_..., RUNNER_..., ACTIONS_...,
-    BASH_ENV or ENV, and anything whose name holds PASSWORD, TOKEN, SECRET
-    or CREDENTIAL, in any case."""
-
-    def hidden(name):
-        upper = name.upper()
-        return (
-            upper.startswith(RECIPE_HIDDEN_PREFIXES)
-            or upper in RECIPE_HIDDEN_NAMES
-            or any(word in upper for word in RECIPE_HIDDEN_WORDS)
-        )
-
-    return {name: value for name, value in environ.items() if not hidden(name)}
-
-
-def build(root, recipe, environ):
-    """Run the recipe's build.sh in recipe_environment(ENVIRON)."""
-    env = recipe_environment(environ)
-    script = root / "recipes" / recipe / "build.sh"
-    out = stream()
-    try:
-        if out is None:
-            done = subprocess.run(["bash", str(script)], env=env, capture_output=True, encoding="utf-8",
-                                  errors="replace", check=False)
-            sys.stderr.write(done.stdout + done.stderr)
-        else:
-            done = subprocess.run(["bash", str(script)], env=env, stdout=out, stderr=out, check=False)
-    except OSError as error:
-        raise Failure(f"cannot run bash: {error.strerror or error}") from None
+def check_recipes(cli, root, every, env):
+    """`upcli recipe check` over every recipe file: a finding is a Failure.
+    Drift is reported: a build writes the lock's record, whatever the work
+    file says now."""
+    done = run_cli(cli, ["recipe", "check", *(str(root / r.path) for r in every)], env)
+    for line in done.stdout.splitlines():
+        if line.strip().startswith(recipes.DRIFT):
+            log(f"warning: {line.strip()}")
     if done.returncode != 0:
-        raise Failure(f"recipes/{recipe}/build.sh exited with status {done.returncode}")
+        sys.stderr.write(done.stdout + done.stderr)
+        raise Failure(f"upcli recipe check: {why(done)}")
+    missing = recipes.not_passed(done.stdout, [root / r.path for r in every])
+    if missing:
+        raise Failure("upcli recipe check printed no ok line for " + ", ".join(str(m) for m in missing))
+    log(last_line(done.stdout))
 
 
-def check_outputs(checked, out_dir):
-    """Every pinned output is a regular file in OUT_DIR with its SHA-256."""
-    real_out = os.path.realpath(out_dir)
-    for path, expected in manifest.pins(checked):
-        full = os.path.join(out_dir, *path.split("/"))
-        try:
-            mode = os.lstat(full).st_mode
-        except OSError:
-            raise Failure(f"missing output {path} in {out_dir}") from None
-        if not stat.S_ISREG(mode) or not os.path.realpath(full).startswith(real_out + os.sep):
-            raise Failure(f"output {path} is not a regular file inside {out_dir}")
-        digest = hashlib.sha256()
-        with open(full, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != expected:
-            raise Failure(f"output {path}: SHA-256 {digest.hexdigest()}, pinned {expected}")
-
-
-def import_artifact(cli, item, out_dir, store, env):
-    """Import the set or package into STORE and check what upcli shows of
-    it; its digest."""
-    args = [*item.artifact.arguments, "--store", str(store), "--create"]
+def build_item(cli, root, item, store, options, env):
+    """`upcli recipe build` of the item's recipe into STORE; its digest and
+    whether the recipe is locked (pinned) or a draft. Its report goes to
+    stderr."""
+    args = ["recipe", "build", str(root / item.recipe.path), "--store", str(store)]
+    if options.fetch:
+        args.append("--fetch")
+    for library in options.library:
+        args += ["--library", library]
     done = run_cli(cli, args, env)
+    sys.stderr.write(done.stdout + done.stderr)
     if done.returncode != 0:
-        raise Failure(f"import: {why(done)}")
-    if item.artifact.kind == "firmware":
-        digest = imported_package(item, done.stdout)
-        check_firmware_show(cli, item, digest, out_dir, store, env)
-    else:
-        digest = imported_set(item, done.stdout)
-        check_media_show(cli, item, digest, store, env)
-    return digest
+        raise Failure(f"recipe build: {why(done)}")
+    found = BUILT.fullmatch(last_line(done.stdout))
+    if not found or found.group(1) != item.ref:
+        raise Failure(f"recipe build: unexpected last line {last_line(done.stdout)!r}; expected the "
+                      f"built line of {item.ref}")
+    return found.group(2), found.group(3)
 
 
-def imported_set(item, stdout):
-    """The set digest `image media import` reports last, for the set's
-    ref."""
-    reported = last_line(stdout).split("\t")
-    if len(reported) != 2 or reported[0] != item.ref or not manifest.DIGEST.fullmatch(reported[1]):
-        raise Failure(f"import: unexpected last line {last_line(stdout)!r}")
-    return reported[1]
-
-
-def check_media_show(cli, item, digest, store, env):
-    done = run_cli(cli, ["image", "media", "show", item.store_tag, "--store", str(store)], env)
+def check_show(cli, item, digest, store, env):
+    """`upcli image media show` or `image firmware show` of the item in
+    STORE names it first, with DIGEST (None: any digest, which is then
+    returned), and reports it pushable to unemu/ last."""
+    done = run_cli(cli, ["image", item.kind, "show", item.store_tag, "--store", str(store)], env)
     if done.returncode != 0:
-        raise Failure(f"media show: {why(done)}")
+        raise Failure(f"{item.kind} show: {why(done)}")
     lines = done.stdout.splitlines()
     first = lines[0].split("\t") if lines else []
-    if len(first) != 3 or first[:2] != [item.store_tag, digest]:
-        raise Failure(f"media show: the first line {lines[:1]} does not name {item.store_tag} {digest}")
+    if len(first) < 3 or first[0] != item.store_tag or not DIGEST.fullmatch(first[1]) \
+            or digest not in (None, first[1]):
+        raise Failure(f"{item.kind} show: the first line {lines[:1]} does not name {item.store_tag} "
+                      f"{digest or ''}".rstrip())
     if lines[-1] != PUSHABLE:
-        raise Failure(f"media show: the last line is {lines[-1]!r}, not {PUSHABLE!r}")
+        raise Failure(f"{item.kind} show: the last line is {lines[-1]!r}, not {PUSHABLE!r}")
+    return first[1]
 
 
-def imported_package(item, stdout):
-    """The package digest `image firmware import --for` reports: its output
-    must be exactly the complete line for the store tag and the pinned ROM,
-    then the imported line. Anything else, a note above all (one that keeps
-    the ROM user-supplied, say), or "already imported", fails."""
-    tag, rom = item.store_tag, item.checked.rom.sha256
-    lines = [line for line in stdout.splitlines() if line.strip()]
-    if lines[:1] != [f"complete\t{tag}\t{rom}"] or len(lines) != 2:
-        raise Failure(f"import: unexpected output {lines!r}; expected the complete line of {tag} "
-                      "and the imported line only")
-    reported = lines[1].split("\t")
-    if len(reported) != 3 or reported[:2] != ["imported", tag] or not manifest.DIGEST.fullmatch(reported[2]):
-        raise Failure(f"import: unexpected last line {lines[1]!r}")
-    return reported[2]
+# What upcli 0.0.3 writes into a store's store.toml and images/oci-layout;
+# a clean store (--no-build) is made of these, the index entries it pushes
+# and the blobs they name, every one checked.
+STORE_TOML = b"schema = 1\n"
+OCI_LAYOUT = b'{"imageLayoutVersion":"1.0.0"}'
 
 
-def rust_debug(text):
-    """TEXT as upcli's show prints a string, Rust's Debug of a str: in double
-    quotes, with backslash, double quote and control characters escaped.
-    Rust also escapes some non-ASCII characters (unprintable ones, grapheme
-    extenders), which are kept here: such a text then fails the comparison,
-    never passes it falsely."""
-    escapes = {"\\": "\\\\", '"': '\\"', "\t": "\\t", "\r": "\\r", "\n": "\\n", "\0": "\\0"}
-    out = []
-    for char in text:
-        if char in escapes:
-            out.append(escapes[char])
-        elif char < " " or char == "\x7f":
-            out.append(f"\\u{{{ord(char):x}}}")
-        else:
-            out.append(char)
-    return '"' + "".join(out) + '"'
-
-
-def file_size(path):
+def copy_blob(source, clean, digest, size):
+    """The blob DIGEST of the store SOURCE (an OCI layout, untrusted),
+    copied into the store CLEAN as it is read and checked: a regular file
+    inside SOURCE (no link), with that SHA-256 and SIZE. Only bytes that
+    passed reach CLEAN. Its bytes when it is at most MAX_MANIFEST long,
+    else None."""
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        raise Failure(f"the store names a blob {digest!r} that is not sha256:<64 hex digits>")
+    if type(size) is not int or size < 0:
+        raise Failure(f"the store gives the blob {digest} the size {size!r}")
+    name = digest.split(":")[1]
+    path = pathlib.Path(source) / "images" / "blobs" / "sha256" / name
     try:
-        return os.stat(path).st_size
-    except OSError as error:
-        raise Failure(f"cannot read {path}: {error.strerror}") from None
+        mode = os.lstat(path).st_mode
+    except OSError:
+        raise Failure(f"the store lacks the blob {digest}") from None
+    if not stat.S_ISREG(mode) or not os.path.realpath(path).startswith(os.path.realpath(source) + os.sep):
+        raise Failure(f"the blob {digest} is not a regular file inside the store")
+    target = pathlib.Path(clean) / "images" / "blobs" / "sha256" / name
+    part = target.with_name(name + ".part")
+    hashed, length, kept = hashlib.sha256(), 0, []
+    with open(path, "rb") as handle, open(part, "wb") as out:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            hashed.update(chunk)
+            length += len(chunk)
+            if length > size:
+                break
+            out.write(chunk)
+            if length <= MAX_MANIFEST:
+                kept.append(chunk)
+    if length != size:
+        part.unlink()
+        raise Failure(f"the store's blob {digest} is not the {size} bytes its descriptor says")
+    if hashed.hexdigest() != name:
+        part.unlink()
+        raise Failure(f"the store's blob {digest} holds other bytes (SHA-256 {hashed.hexdigest()})")
+    os.replace(part, target)
+    return b"".join(kept) if length <= MAX_MANIFEST else None
 
 
-def check_firmware_show(cli, item, digest, out_dir, store, env):
-    """`upcli image firmware show` of the imported package states the
-    manifest's package (unemupc crates/cli-pc/src/image/firmware.rs, show): the store
-    tag, digest and title first; one ROM, the pinned one with its size; the
-    vendor, version, description and labels (sorted, as the import stores
-    them); one source archive, the pinned one with its file name, format and
-    size; every layer open, the ROM and the source archive under the
-    manifest's licence and the config and README under CC0-1.0; and last,
-    pushable to unemu/."""
-    package, rom, source = item.checked.package, item.checked.rom, item.checked.source
-    done = run_cli(cli, ["image", "firmware", "show", item.store_tag, "--store", str(store)], env)
-    if done.returncode != 0:
-        raise Failure(f"firmware show: {why(done)}")
-    lines = done.stdout.splitlines()
+def clean_store(clean):
+    """A new, empty store at CLEAN, as upcli 0.0.3 lays one out."""
+    (pathlib.Path(clean) / "images" / "blobs" / "sha256").mkdir(parents=True)
+    (pathlib.Path(clean) / "locks").mkdir()
+    (pathlib.Path(clean) / "store.toml").write_bytes(STORE_TOML)
+    (pathlib.Path(clean) / "images" / "oci-layout").write_bytes(OCI_LAYOUT)
+    write_index(clean, [])
 
-    def refuse(what):
-        raise Failure(f"firmware show: {what}")
 
-    if not lines or lines[0].split("\t") != [item.store_tag, digest, rust_debug(package.title)]:
-        refuse(f"the first line {lines[:1]} does not name {item.store_tag} {digest} {package.title!r}")
-    rows = [line.split("\t") for line in lines[1:]]
-    roms = [row for row in rows if len(row) == 4 and manifest.SHA256.fullmatch(row[3])]
-    rom_size = file_size(os.path.join(out_dir, *rom.path.split("/")))
-    if len(roms) != 1 or roms[0][2:] != [str(rom_size), rom.sha256]:
-        refuse(f"the ROM lines {roms} are not the one ROM {rom.sha256} of {rom_size} bytes")
-    labels = "[" + ", ".join(rust_debug(label) for label in sorted(package.labels)) + "]"
-    for key, value in (("vendor", rust_debug(package.vendor)), ("version", rust_debug(package.version)),
-                       ("description", rust_debug(package.description)), ("labels", labels)):
-        found = [row[1:] for row in rows if row[0] == key]
-        if found != [[value]]:
-            refuse(f"{key} is {found}, not [{value!r}]")
-    source_size = file_size(os.path.join(out_dir, *source.path.split("/")))
-    source_format = "zip" if source.path.endswith(".zip") else "tar"
-    sources = [row[1:5] for row in rows if row[0] == "source"]
-    expected = [rust_debug(manifest.file_name(source.path)), source_format, str(source_size),
-                f"sha256:{source.sha256}"]
-    if sources != [expected]:
-        refuse(f"the source lines {sources} are not the one archive {expected}")
-    _, license = manifest.parse_license(package.license, "package.license")
-    layers = [row[1:] for row in rows if row[0] == "layer"]
-    wanted = {
-        "rom": [["rom", f"sha256:{rom.sha256}", "open", license]],
-        "source": [["source", f"sha256:{source.sha256}", "open", license]],
-    }
-    for kind, expected in wanted.items():
-        found = [layer for layer in layers if layer[:1] == [kind]]
-        if found != expected:
-            refuse(f"the {kind} layers {found} are not {expected}")
-    for layer in layers:
-        if layer[:1] not in (["rom"], ["source"]) and layer[2:] != ["open", FIRMWARE_METADATA_LICENSE]:
-            refuse(f"the {' '.join(layer[:1])} layer is {layer[2:]}, not open under {FIRMWARE_METADATA_LICENSE}")
-    if lines[-1] != PUSHABLE:
-        refuse(f"the last line is {lines[-1]!r}, not {PUSHABLE!r}")
+def write_index(clean, entries):
+    index = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json", "manifests": entries}
+    (pathlib.Path(clean) / "images" / "index.json").write_text(json.dumps(index, indent=2) + "\n",
+                                                               encoding="utf-8")
+
+
+def read_index(source):
+    """The manifests the index of the store SOURCE lists (untrusted), read
+    under copy_blob's rules: a regular file (no link) inside the store, at
+    most MAX_MANIFEST bytes."""
+    path = pathlib.Path(source) / "images" / "index.json"
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError("not a regular file")
+        if not os.path.realpath(path).startswith(os.path.realpath(source) + os.sep):
+            raise OSError("not inside the store")
+        if info.st_size > MAX_MANIFEST:
+            raise ValueError(f"larger than {MAX_MANIFEST} bytes")
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_MANIFEST + 1)
+        if len(data) > MAX_MANIFEST:
+            raise ValueError(f"larger than {MAX_MANIFEST} bytes")
+        entries = json.loads(data, object_pairs_hook=_unique_keys)["manifests"]
+        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+            raise ValueError("no list of manifests")
+        return entries
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as error:
+        raise Failure(f"the store's index cannot be read: {error}") from None
+
+
+def take_from_store(source, clean, ref, pinned):
+    """--no-build: the digest under which the store SOURCE (an OCI layout
+    an earlier job built, untrusted here) names REF. When it is PINNED,
+    REF is copied into the store CLEAN, where upcli
+    reads it, and only what passed is copied: the manifest the index names
+    under REF, with that digest, and every blob the manifest names, config
+    and layers, each with its digest and size. So upcli reads no file of
+    SOURCE, and the bytes a push uploads are the ones the pin names."""
+    named = [entry for entry in read_index(source)
+             if isinstance(entry.get("annotations"), dict)
+             and entry["annotations"].get("org.opencontainers.image.ref.name") == ref]
+    if len(named) != 1:
+        raise Failure(f"the store names {ref} {len(named)} times, not once")
+    digest, size = named[0].get("digest"), named[0].get("size")
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        raise Failure(f"the store names {ref} with {digest!r}, not sha256:<64 hex digits>")
+    if digest != pinned:
+        return digest
+    body = copy_blob(source, clean, digest, size)
+    try:
+        manifest = json.loads(body, object_pairs_hook=_unique_keys)
+        media_type = manifest["mediaType"]
+        blobs = [(d["digest"], d["size"]) for d in [manifest["config"], *manifest["layers"]]]
+        if not isinstance(media_type, str):
+            raise ValueError("no media type")
+    except (ValueError, KeyError, TypeError, RecursionError) as error:
+        raise Failure(f"the manifest {digest} of {ref} cannot be read: {error}") from None
+    for blob, length in blobs:
+        copy_blob(source, clean, blob, length)
+    entries = read_index(clean)
+    entries.append({"mediaType": media_type, "digest": digest, "size": size,
+                    "annotations": {"org.opencontainers.image.ref.name": ref}})
+    write_index(clean, entries)
+    return digest
 
 
 def dry_run(cli, item, target, store, config, digest, env):
@@ -792,31 +773,41 @@ def remove_tree(path):
 def parse_args(argv, environ):
     parser = argparse.ArgumentParser(
         prog="lib/publish.py",
-        description="Build, import, check and (with --push) publish the media sets and firmware packages.",
+        description="Build, check and (with --push) publish the media sets and firmware packages.",
     )
     parser.add_argument("--cli", default=environ.get(CLI_ENV),
                         help=f"the upcli binary (default: ${CLI_ENV})")
-    parser.add_argument("--store", help="a new directory to import into, kept afterwards")
+    parser.add_argument("--store", help="a new directory to build into, kept afterwards; with --no-build, "
+                                        "the store an earlier run built")
+    parser.add_argument("--fetch", action="store_true",
+                        help="let upcli recipe build download missing inputs from their pinned URLs")
+    parser.add_argument("--library", action="append", default=[], metavar="DIR",
+                        help="a folder where upcli recipe build looks for inputs (repeatable)")
+    parser.add_argument("--no-build", action="store_true",
+                        help="build nothing: every selected set and package must be in --store already")
     parser.add_argument("--experimental", metavar="RUN",
                         help="target unemu/experimental/media/ibm-pc/<work>:<release>-ci<RUN>-rN and "
                              "unemu/experimental/firmware/ibm-pc/<id>:ci<RUN>-rN")
     parser.add_argument("--skip-published", action="store_true",
                         help="read each pinned set's and package's own tag (and a set's alias) anonymously "
                              "first; one that already serves the pinned digest is neither built nor pushed")
-    parser.add_argument("--no-build", action="store_true",
-                        help="run no build.sh: the outputs must already be in out/<recipe>/ and match "
-                             "their pins")
     parser.add_argument("--push", action="store_true", help="push the checked sets and packages")
-    parser.add_argument("--allow-unpinned", action="store_true",
-                        help="a dry run passes with sets or packages that have no digest pin yet")
-    parser.add_argument("selectors", nargs="*", metavar="RECIPE|REF")
+    parser.add_argument("--report", metavar="FILE", help="also write the summary's rows to FILE as JSON")
+    parser.add_argument("selectors", nargs="*", metavar="RECIPE|FOLDER|REF")
     options = parser.parse_args(argv)
     if not options.cli:
         parser.error(f"--cli UPCLI (or ${CLI_ENV}) is required")
     if options.experimental is not None and not RUN.fullmatch(options.experimental):
         parser.error("--experimental RUN takes the CI run id: 1 to 20 digits, not starting with 0")
-    if options.push and options.allow_unpinned:
-        parser.error("--allow-unpinned is for a dry run; nothing without a digest pin is ever pushed")
+    if options.no_build:
+        if options.store is None:
+            parser.error("--no-build needs --store DIR, the store an earlier run built")
+        if options.fetch or options.library:
+            parser.error("--no-build builds nothing: --fetch and --library are for a build")
+    for library in options.library:
+        if not os.path.isdir(library):
+            parser.error(f"--library {library}: not a folder")
+    options.library = [os.path.abspath(library) for library in options.library]
     return parser, options
 
 
@@ -845,70 +836,40 @@ def find_cli(parser, cli, environ):
     return os.path.abspath(cli)
 
 
-def recipe_manifest(recipes_dir, recipe):
-    """The file name of the recipe's one manifest, or None when it has
-    none; a Failure when it has both kinds."""
-    found = [name for name in MANIFEST_FILES if (recipes_dir / recipe / name).is_file()]
-    if len(found) > 1:
-        raise Failure(f"recipes/{recipe} has both {' and '.join(found)}; a recipe has one manifest")
-    return found[0] if found else None
-
-
-def select(parser, root, selectors, out_root):
-    """Every manifest checked, and the selected sets and packages as Items
-    (without a target yet), their import arguments naming the outputs in
-    OUT_ROOT/<recipe>."""
-    recipes_dir = root / "recipes"
-    found = {}
-    if recipes_dir.is_dir():
-        for path in recipes_dir.iterdir():
-            name = recipe_manifest(recipes_dir, path.name)
-            if name is not None:
-                found[path.name] = name
-    recipes = sorted(found)
-    if not recipes:
-        raise Failure(f"no recipes in {recipes_dir}")
-    log("== check manifests")
-    checked = {}
-    for recipe in recipes:
-        name = f"recipes/{recipe}/{found[recipe]}"
-        try:
-            checked[recipe] = manifest.load(recipes_dir / recipe / found[recipe])
-        except manifest.Refusal as refusal:
-            raise Failure(f"{name}: {refusal}") from None
-        # The file name says the kind (manifest.load).
-        is_package = isinstance(checked[recipe], manifest.FirmwareManifest)
-        for warning in checked[recipe].warnings:
-            log(f"{name}: warning: {warning}")
-        if is_package:
-            log(f"{name}: ok, firmware package")
-        else:
-            log(f"{name}: ok, {len(checked[recipe].sets)} sets")
+def select(parser, root, selectors):
+    """Every recipe read (lib/recipes.py), and the selected sets and
+    packages as Items (without a target yet), in recipe order."""
+    log("== read the recipes")
     try:
-        manifest.refs([(f"recipes/{r}/{found[r]}", checked[r]) for r in recipes])
-    except manifest.Refusal as refusal:
+        every = recipes.load(root)
+    except recipes.Refusal as refusal:
         raise Failure(str(refusal)) from None
-
-    every = [(r, a) for r in recipes for a in manifest.artifacts(checked[r], str(out_root / r))]
+    except OSError as error:
+        raise Failure(f"cannot read the recipes: {error}") from None
+    if not every:
+        raise Failure(f"no recipes in {root / recipes.RECIPES}")
+    for recipe in every:
+        log(f"{recipe.path}: {recipe.ref}{'' if recipe.digest else ' (a draft)'}")
     if not selectors:
         chosen = every
     else:
         wanted = set()
         for selector in selectors:
-            matching = [(r, a) for r, a in every if selector in (r, a.ref)]
-            if not matching:
-                parser.error(f"{selector!r} is neither a recipe nor a ref "
+            path = selector.rstrip("/")
+            matching = [r for r in every if selector == r.ref or path == r.path or r.path.startswith(path + "/")]
+            if not path or not matching:
+                parser.error(f"{selector!r} is neither a recipe, a folder of recipes nor a ref "
                              "(unemu/media/ibm-pc/<work>:<release>-rN or unemu/firmware/ibm-pc/<id>:rN)")
-            wanted.update(a.ref for _, a in matching)
-        chosen = [(r, a) for r, a in every if a.ref in wanted]
-    return [Item(r, checked[r], a, "", "") for r, a in chosen]
+            wanted.update(r.path for r in matching)
+        chosen = [r for r in every if r.path in wanted]
+    return every, [Item(r, "", "") for r in chosen]
 
 
 def experimental_tag(tag, run):
-    """The revision tag TAG (manifest.parse_revision) of run RUN: ci<RUN> as
+    """The revision tag TAG (recipes.parse_revision) of run RUN: ci<RUN> as
     the last part of its release, <release>-ci<RUN>-rN or ci<RUN>-rN; and
     that release, which is the alias of a set's experimental tag."""
-    parsed = manifest.parse_revision(tag)
+    parsed = recipes.parse_revision(tag)
     if parsed is None:
         raise Failure(f"the tag {tag!r} is not a revision tag")
     release, number = parsed
@@ -921,40 +882,48 @@ def set_target(item, experimental):
     EXPERIMENTAL (a run id) unemu/experimental/<kind>/ibm-pc/<name>:
     <release>-ci<RUN>-rN (experimental_tag), with the alias
     <release>-ci<RUN> for a set. A Failure when the experimental repository
-    or tag is longer than a repository name or tag may be: the manifests
-    keep their own within the limits, not the experimental one."""
+    or tag is longer than a repository name or tag may be: the recipes keep
+    their own within the limits, not the experimental one."""
+    recipe = item.recipe
     if experimental is None:
-        item.repository, item.tag, item.alias = item.artifact.repository, item.artifact.tag, item.artifact.alias
+        item.repository, item.tag, item.alias = recipe.repository, recipe.tag, recipe.alias
         return
-    repository = item.artifact.repository
-    if not repository.startswith(OFFICIAL_PREFIX):
-        raise Failure(f"{repository} is outside {OFFICIAL_PREFIX}")
-    item.repository = EXPERIMENTAL_PREFIX + repository[len(OFFICIAL_PREFIX):]
-    item.tag, release = experimental_tag(item.artifact.tag, experimental)
-    item.alias = release if item.artifact.alias is not None else None
-    if len(item.repository) > manifest.MAX_REPOSITORY:
+    if not recipe.repository.startswith(OFFICIAL_PREFIX):
+        raise Failure(f"{recipe.repository} is outside {OFFICIAL_PREFIX}")
+    item.repository = EXPERIMENTAL_PREFIX + recipe.repository[len(OFFICIAL_PREFIX):]
+    item.tag, release = experimental_tag(recipe.tag, experimental)
+    item.alias = release if recipe.alias is not None else None
+    if len(item.repository) > recipes.MAX_REPOSITORY:
         raise Failure(
             f"the experimental repository {item.repository} of {item.ref} is "
-            f"{len(item.repository)} bytes, longer than {manifest.MAX_REPOSITORY}"
+            f"{len(item.repository)} bytes, longer than {recipes.MAX_REPOSITORY}"
         )
-    if not manifest.TAG.fullmatch(item.tag):
+    if not recipes.TAG.fullmatch(item.tag):
         raise Failure(f"the target tag {item.tag!r} is longer than 128 characters")
 
 
+def rows(items):
+    return [{
+        "ref": item.ref,
+        "recipe": item.recipe.path,
+        "repository": item.repository,
+        "tag": item.tag,
+        "alias": item.alias,
+        "digest": item.digest,
+        "outcome": item.outcome,
+        "licence": item.license,
+        "detail": item.detail,
+    } for item in items]
+
+
 def summary(items, host, mode):
-    rows = [("REPOSITORY", "TAG", "ALIAS", "DIGEST", "OUTCOME", "LICENCE")]
+    table = [("REPOSITORY", "TAG", "ALIAS", "DIGEST", "OUTCOME", "LICENCE")]
     for item in items:
-        rows.append((
-            item.repository,
-            item.tag,
-            item.alias or "-",
-            item.digest or "-",
-            item.outcome,
-            item.artifact.license,
-        ))
-    widths = [max(len(row[i]) for row in rows) for i in range(5)]
+        table.append((item.repository, item.tag, item.alias or "-", item.digest or "-", item.outcome,
+                      item.license))
+    widths = [max(len(row[i]) for row in table) for i in range(5)]
     print(f"registry {host} ({mode})")
-    for row in rows:
+    for row in table:
         print("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row[:5])) + "  " + row[5])
     for item in items:
         if item.detail:
@@ -974,14 +943,16 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
         store_arg = None
         if options.store is not None:
             store_arg = pathlib.Path(options.store).resolve()
-            if os.path.lexists(store_arg):
+            if options.no_build and not store_arg.is_dir():
+                parser.error(f"--store {options.store}: --no-build needs the store an earlier run built")
+            if not options.no_build and os.path.lexists(store_arg):
                 parser.error(f"--store {options.store}: it exists; give a new directory")
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 2
 
     try:
         pin = read_pin(root)
-        items = select(parser, root, options.selectors, root / "out")
+        every, items = select(parser, root, options.selectors)
         for item in items:
             set_target(item, options.experimental)
     except Failure as failure:
@@ -993,13 +964,24 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
     (root / "build").mkdir(exist_ok=True)
     work = pathlib.Path(tempfile.mkdtemp(prefix="publish.", dir=root / "build"))
     try:
-        return run(options, root, cli, pin, host, items, work, store_arg, registry, environ)
+        status = run(options, root, cli, pin, host, every, items, work, store_arg, registry, environ)
     finally:
         remove_tree(work)
+    if options.report:
+        try:
+            pathlib.Path(options.report).write_text(json.dumps(rows(items), indent=1) + "\n", encoding="utf-8")
+        except OSError as error:
+            log(f"cannot write the report {options.report}: {error}")
+            return 1
+    return status
 
 
-def run(options, root, cli, pin, host, items, work, store_arg, registry, environ):
-    store = store_arg or work / "store"
+def run(options, root, cli, pin, host, every, items, work, store_arg, registry, environ):
+    # With --no-build, upcli reads a clean store of its own, into which only
+    # checked bytes of the given store are copied (take_from_store).
+    store = work / "store" if options.no_build or store_arg is None else store_arg
+    if options.no_build:
+        clean_store(store)
     (work / "home").mkdir()
     (work / "tmp").mkdir()
     config = work / "registries.toml"
@@ -1026,61 +1008,64 @@ def run(options, root, cli, pin, host, items, work, store_arg, registry, environ
         log(f"refused: {refusal}")
         return 1
     log(f"upcli --version reports commit {pin.commit}, as pinned")
+    log("== check the recipes")
+    try:
+        check_recipes(cli, root, every, env)
+    except Failure as failure:
+        log(f"refused: {failure}")
+        return 1
     log(f"store {store}")
 
     if options.skip_published:
         log(f"== read the published tags on {host}")
         for item in items:
-            check_published(host, item, registry)
+            check_published(host, item, registry, experimental=options.experimental is not None)
 
-    for recipe in dict.fromkeys(item.recipe for item in items):
-        selected = [item for item in items if item.recipe == recipe]
-        # Only what is still to do: not published, not refused or failed.
-        group = [item for item in selected if item.outcome == "not checked"]
-        if not group:
-            if all(item.outcome == "published" for item in selected):
-                log(f"== skip {recipe}: published, not built")
-            else:
-                log(f"== skip {recipe}: nothing of it is left to build")
+    for item in items:
+        if item.outcome != "not checked":
+            if item.outcome == "published":
+                log(f"== skip {item.ref}: published, not built")
             continue
-        out_dir = root / "out" / recipe
+        reference = f"{host}/{item.repository}:{item.tag}"
+        if item.alias is not None:
+            reference += f" (alias {item.alias})"
         try:
             if options.no_build:
-                log(f"== check the outputs of {recipe} (--no-build)")
-                existing_outputs(recipe, group[0].checked, out_dir)
+                pinned = item.recipe.digest
+                if pinned is None:
+                    # Nothing of a draft is read from the store, so no byte
+                    # without a pin reaches upcli where it can push.
+                    item.fail("unpinned", "a draft: the recipe has no digest pin (upcli recipe pin); never "
+                                          "taken from the store or pushed")
+                    log(f"{item.ref}: {item.outcome}")
+                    continue
+                log(f"== take {item.ref} from the store (--no-build)")
+                item.digest = take_from_store(store_arg, store, item.ref, pinned)
+                if item.digest != pinned:
+                    item.fail("mismatch", f"the store holds {item.digest} under {item.ref}, the recipe pins {pinned}")
+                    log(f"{item.ref}: {item.outcome}")
+                    continue
+                check_show(cli, item, item.digest, store, env)
+                state = "locked"
             else:
-                log(f"== build {recipe}")
-                build(root, recipe, environ)
-                check_outputs(group[0].checked, out_dir)
+                log(f"== build {item.recipe.path}")
+                item.digest, state = build_item(cli, root, item, store, options, env)
+                check_show(cli, item, item.digest, store, env)
+            for tag in item.tags():
+                dry_run(cli, item, f"{host}/{item.repository}:{tag}", store, config, item.digest, env)
         except Exception as error:  # noqa: BLE001 - every failure reaches the summary
-            for item in group:
-                item.fail("failed", describe(error))
+            item.fail("failed", describe(error))
             continue
-        for item in group:
-            reference = f"{host}/{item.repository}:{item.tag}"
-            if item.alias is not None:
-                reference += f" (alias {item.alias})"
-            log(f"== import {item.ref}")
-            try:
-                item.digest = import_artifact(cli, item, out_dir, store, env)
-                for tag in item.tags():
-                    dry_run(cli, item, f"{host}/{item.repository}:{tag}", store, config, item.digest, env)
-            except Exception as error:  # noqa: BLE001 - every failure reaches the summary
-                item.fail("failed", describe(error))
-                continue
-            pinned = item.artifact.digest
-            if pinned is None:
-                item.outcome = "unpinned"
-                item.detail = "no digest pin in the manifest; never pushed"
-            elif pinned != item.digest:
-                item.fail("mismatch", f"upcli gives {item.digest}, the manifest pins {pinned}")
-            else:
-                item.outcome = "dry run"
-            log(f"{item.ref}: {item.digest} -> {reference}: {item.outcome}")
+        pinned = item.recipe.digest
+        if pinned is None or state == "draft":
+            item.fail("unpinned", "a draft: the recipe has no digest pin (upcli recipe pin); never pushed")
+        elif pinned != item.digest:
+            item.fail("mismatch", f"upcli gives {item.digest}, the recipe pins {pinned}")
+        else:
+            item.outcome = "dry run"
+        log(f"{item.ref}: {item.digest} -> {reference}: {item.outcome}")
 
     status = 1 if any(item.failed for item in items) else 0
-    if not options.allow_unpinned and any(item.outcome == "unpinned" for item in items):
-        status = 1
     if options.push:
         status = push_all(cli, host, items, store, config, env, registry, environ) or status
     summary(items, host, mode)
@@ -1095,18 +1080,24 @@ NEVER_MOVES = "a revision tag never moves: stop and ask the maintainer"
 ALIAS_STAYS = "this pipeline never moves an alias: stop and ask the maintainer"
 
 
-def check_published(host, item, registry):
+def check_published(host, item, registry, experimental=False):
     """--skip-published: the anonymous read of the item's own tag (on
     unemu/media/ or unemu/firmware/, whatever the target), then of a set's
     own alias. The pinned digest under both makes it `published`, another
     digest under either `refused`; a missing tag, or the missing alias of a
     tag that serves the pin, leaves it to be built and pushed. The row then
-    names the tag that was read. An item without a pin is not read: nothing
-    to compare it with."""
-    pinned = item.artifact.digest
+    names the tag that was read. A draft is not read: nothing to compare it
+    with.
+
+    With EXPERIMENTAL (the push goes to unemu/experimental/ only) another
+    digest under the official tag or alias refuses nothing: the set or
+    package goes on, to be built and pushed to its experimental tags, and
+    its detail says what the official tag still serves. So a replacement
+    can be tested before the maintainer deletes what it replaces."""
+    pinned = item.recipe.digest
     if pinned is None:
         return
-    repository, tag, alias = item.artifact.repository, item.artifact.tag, item.artifact.alias
+    repository, tag, alias = item.recipe.repository, item.recipe.tag, item.recipe.alias
     served = {}
     for name in [tag] + ([alias] if alias is not None else []):
         try:
@@ -1121,31 +1112,32 @@ def check_published(host, item, registry):
         log(f"{item.ref}: not on {host} yet")
         return
     if current != pinned:
+        if experimental:
+            item.detail = (f"note: {host}/{repository}:{tag} still serves {current}, the recipe pins {pinned}; "
+                           "replacing it needs the maintainer (delete its tag and alias, then publish)")
+            log(f"{item.ref}: {item.detail}")
+            return
         item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
-        item.fail("refused", f"{host} already serves {current} under this tag, the manifest pins {pinned}; "
+        item.fail("refused", f"{host} already serves {current} under this tag, the recipe pins {pinned}; "
                              f"{NEVER_MOVES}")
         return
     if alias is not None and served[alias] is None:
         log(f"{item.ref}: {host} serves the pinned {pinned}, but not under its alias {alias} yet: "
             "built and pushed again to add the alias")
         return
-    item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
     if alias is not None and served[alias] != pinned:
+        if experimental:
+            item.detail = (f"note: {host}/{repository}:{alias}, the alias, still names {served[alias]}, the "
+                           f"recipe pins {pinned}; moving it needs the maintainer")
+            log(f"{item.ref}: {item.detail}")
+            return
+        item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
         item.fail("refused", f"{host} serves the pinned {pinned} under this tag, but its alias {alias} names "
                              f"{served[alias]}; {ALIAS_STAYS}")
         return
+    item.repository, item.tag, item.alias, item.digest = repository, tag, alias, current
     item.outcome = "published"
     log(f"{item.ref}: {host} serves the pinned {pinned}: published, not built or pushed")
-
-
-def existing_outputs(recipe, checked, out_dir):
-    """--no-build: every pinned output is already in OUT_DIR with its hash
-    (check_outputs), or a Failure that says how to get them there."""
-    try:
-        check_outputs(checked, out_dir)
-    except Failure as failure:
-        raise Failure(f"--no-build: {failure}; build the recipe first (bash recipes/{recipe}/build.sh, "
-                      "or this pipeline without --no-build)") from None
 
 
 def push_all(cli, host, items, store, config, env, registry, environ):
@@ -1217,7 +1209,7 @@ def push_one(cli, host, item, store, config, secrets, registry):
             fail("failed", describe(error))
             return
         if digest != item.digest:
-            fail("failed", f"upcli pushed {digest} to :{name}, the {item.artifact.kind} digest is {item.digest}")
+            fail("failed", f"upcli pushed {digest} to :{name}, the {item.kind} digest is {item.digest}")
             return
         try:
             served = registry(host, item.repository, name)

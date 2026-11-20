@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Tests of recipes/freedos-1.4-floppy/iso-extract.py on tiny ISO 9660
+"""Tests of recipes/media/freedos/source/iso-extract.py on tiny ISO 9660
 images built here, in a fresh temporary directory: the listed files are
 copied byte for byte, and each refusal fires before anything is written
 where it should not be. Offline, standard library only.
@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
-READER = HERE.parent / "recipes" / "freedos-1.4-floppy" / "iso-extract.py"
+READER = HERE.parent / "recipes" / "media" / "freedos" / "source" / "iso-extract.py"
 
 SECTOR = 2048
 # iso-extract.py's bound on one copied file.

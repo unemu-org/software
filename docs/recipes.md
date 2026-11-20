@@ -1,160 +1,200 @@
 # Recipes
 
-A recipe turns one upstream release into the outputs of one or more media
-sets, or of one firmware package, byte for byte the same on every run. The
-rules behind them (upstream bytes, licences, sources) are in
+A recipe turns pinned upstream inputs into one media set or one firmware
+package, byte for byte the same on every run. It is a recipe file of
+`upcli`, the CLI of the pinned unemupc release (`upcli.toml`): TOML 1.0, an
+ordered list of closed steps that start no process, inputs found by size
+and SHA-256, and a lock that pins every byte of the artifact it builds. The
+format is unemupc's (its decisions 33 to 39 and
+`backlog/docs/design/recipes.md`, recipe version `0.1`); the rules behind
+our recipes (upstream bytes, licences, sources) are in
 [AGENTS.md](../AGENTS.md).
 
-## What a recipe is
+## Where recipes live
 
-`recipes/<recipe>/`, named after the upstream release
-(`freedos-1.4-floppy`, `at-bios-1.0.2-unemu.3`), holds:
+| Path | What |
+| --- | --- |
+| `recipes/media/<work>/<work>-<release>.media.toml` | one media set, `unemu/media/ibm-pc/<work>:<release>-rN` |
+| `recipes/media/<work>/<work>.work.toml` | the work file: what the releases of the work share |
+| `recipes/media/<work>/licenses.txt` | a bundled input: the licence index, our own text |
+| `recipes/media/<work>/source/` | a script that makes a prepared input (FreeDOS only) |
+| `recipes/firmware/<catalogue id>.firmware.toml` | one firmware package, `unemu/firmware/ibm-pc/<catalogue id>:rN` |
+| `<recipe file>.lock/sha256/<hex>` | the lock `upcli recipe pin` wrote beside the recipe |
 
-- `build.sh`, which pins and fetches the inputs and builds the outputs;
-- one manifest, which pins every output and the digest of every set or
-  package. Its file name says its kind:
-  - `media.toml`: the installation media sets the release feeds, published
-    as `unemu/media/ibm-pc/<work>:<release>-rN` with the release alias
-    `<release>`;
-  - `firmware.toml`: one firmware package, published as
-    `unemu/firmware/ibm-pc/<catalogue id>:rN`;
-- any helper files the build needs (the FreeDOS recipe has an ISO 9660
-  reader and its licence index).
+A folder holds one work, because the work is the repository: a work file
+lies beside the recipes that name it, and the last component of a
+recipe's `name` must equal its work's id. A recipe file builds one
+artifact under one tag. `lib/recipes.py` refuses a recipe outside
+`unemu/media/` or `unemu/firmware/`, and two recipes that name one tag or
+one alias.
 
-A recipe has exactly one manifest. `lib/manifest.py` refuses a manifest
-under any other name, or one holding the other kind's tables, and the
-pipeline refuses a recipe with both.
+The tag is never written: it is `<release>-r<revision>` from `[media]`
+(`r<revision>` for a package, which has no release). A release is parts
+joined by `-` (unemupc's decision-38), in this order and only when they
+apply: the version as the software shows it, the edition, the format when
+it is not the release's own (`1.2m`, `720k`, `360k`, `iso`). FreeDOS 1.4
+gives `1.4`, `1.4-1.2m` and `1.4-720k`; Ken's Labyrinth 2.01, the work's
+primary edition, `2.01`. The release alone is the alias of its newest
+revision.
 
-What the outputs are:
+## What a recipe holds
 
-- **A media set:** the upstream disk images, unmodified and in installer
-  order (or, when upstream ships an archive, a deterministic image of its
-  files as released), a licence index, the corresponding source archive for
-  copyleft content, and documents that state a licence.
-- **A firmware package:** a ROM and its corresponding source archive, both
-  release assets of the ROM's own project, installed unmodified. No recipe
-  builds firmware from source.
+A media recipe (`*.media.toml`):
 
-Every disk, extra, ROM and source archive becomes a layer whose export file
-name (`org.opencontainers.image.title`) is its file name, so upcli refuses
-an import with a file name that macOS, Linux or Windows would not take as
-it is (a control character, one of `/ \ : * ? " < > |`, a trailing space
-or dot, a device name such as `CON.img`, more than 251 bytes), a name the
-export writes itself (`config.toml`, `metadata.json`, `manifest.json`,
-`SHA256SUMS`, `EXPORT-VERSION`, and a package's `README.md`), or two files
-of one set or package whose names differ only in case.
+| Table | What ours hold |
+| --- | --- |
+| `recipe`, `work` | `"0.1"`; the work's id, which names `<work>.work.toml` beside it |
+| `[media]` | `name` (the repository), `platform = "ibm-pc"`, `release`, `revision`, and `digest` once pinned |
+| `[title]` | the release's own fields: `version`, `edition`, `year`, `description`, `requirements`, and labels the work does not share |
+| `[license]` | `expression` (SPDX, or one `LicenseRef-`), `terms` (the extra holding the licence text) and, for copyleft content, `source` (the extra holding the corresponding source) |
+| `[input.<id>]` | `name`, `size`, `sha256`, `urls` (HTTPS, mirrors in order); `bundle = true` for our own text beside the recipe |
+| `[[step]]` | `unpack` (listed members of a zip), `fat` (a FAT volume from a tree), `text` (our text with DOS line ends) |
+| `[[medium]]` | the disks in installer order: `id`, `label`, `format`, `file_name`, `from` |
+| `[[extra]]` | the licence index, the terms text and the source archive: `id`, `file_name`, `dos_name`, `kind`, `from` |
 
-## Where files go
+A firmware recipe (`*.firmware.toml`) has `[firmware]` instead of
+`[media]`, `[package]` instead of `[title]` (`title`, `vendor`, `version`,
+`date`, `description`, `notes`, `labels`, `[package.fits]`), one `[[rom]]`
+taken unmodified from its input, and the source archive as its one
+`[[extra]]`. A package's licence must be the one unemupc's firmware
+catalogue records for the ROM, and the title, description, vendor, version
+and labels are the words of unemupc's template build
+(`pc_image::template::FIRMWARE`), so the two build one package.
 
-| Directory | What | Committed |
+How our recipes use the steps:
+
+- **Disks as released.** An upstream disk image is a member of an
+  `unpack` step with its size and SHA-256, and a `[[medium]]` takes it
+  unmodified (FreeDOS).
+- **An archive without disks.** A `fat` step builds the diskette from the
+  archive's files, unmodified, in the archive's order (`order = "listed"`)
+  and with the archive's times, written into the `unpack` member list;
+  the volume label, serial and label time are the recipe's (Ken's
+  Labyrinth). The bytes are upcli's FAT builder's, with unemupc's own boot
+  sector, which reports a non-system disk and retries the boot.
+- **The licence index.** `licenses.txt`, our own CC0-1.0 text, is a
+  bundled input; a `text` step gives it DOS line ends, and the extra
+  `LICENSES.TXT` carries it.
+
+## Work files
+
+`<work>.work.toml` holds what every release of the work shares:
+`[work] id`, a `[title]` with `title`, `publishers`, `developers`,
+`genres`, `software_platform`, `labels` and `synopsis`, the work's database
+ids (`[ids]`: `wikidata`, `mobygames`, `igdb`) and `[needs]`. A recipe's
+own single values win, its lists of people replace the work's, labels are
+the union, and `synopsis` lives in the work file only (unemupc's
+decision-39). `upcli recipe show FILE` prints the merged record a build
+writes.
+
+A pinned recipe builds its lock's record, never the work file's: an edit to
+a work file reaches a published set only with a new pin. `upcli recipe
+check` reports such a difference as drift; `lib/recipes.py check` (and so
+CI) refuses it, so a work file never silently disagrees with what is
+published. It also refuses a run in which upcli prints no `ok` line for a
+recipe, or for a work file a recipe names.
+
+## Metadata
+
+Every value is cited from the upstream release or its author; nothing is
+guessed, and a value without a source is left out. The sources are named in
+the comments of each file.
+
+| Field | Where | Rule |
 | --- | --- | --- |
-| `cache/<recipe>/` | downloads, checked against their pins on every use | no |
-| `build/work.XXXXXX/` | a fresh work directory per run, removed on exit | no |
-| `out/<recipe>/` | the outputs, installed only once every pin matches | no |
+| work id | recipe `work`, work file `[work] id` | the repository's last component |
+| synopsis | work file | what the work is, after its author's own words |
+| work ids | work file `[ids]` | Wikidata first; MobyGames and IGDB as Wikidata records them |
+| needs | work file `[needs]` | only the kinds and values the release's own documents state (unemupc's `ibm-pc` vocabulary: `cpu`, `fpu`, `video`, `sound`, `memory`, `ems`, `xms`, `input`) |
+| requirements | recipe `[title]` | the release's own words, quoted |
+| package date | firmware `[package] date` | the date the ROM itself carries (its BIOS date or version string) |
+| board | firmware `[package.fits]` | what the firmware catalogue records; stating it changes no byte |
 
-When every output in `out/<recipe>/` already matches its pin, `build.sh`
-stops at once, without the network.
+upcli 0.0.3's recipe format has no keys for a package's provenance (how
+the ROM was made, from where, at which revision) or for the licence of an
+extra other than the source archive; our packages need neither for now.
 
-## Set manifests (media.toml)
+## Inputs
 
-Every set of a manifest is one work, `unemu/media/ibm-pc/<work>`, under its
-own tag. Output paths are relative to `out/<recipe>/`.
+An input is its size and SHA-256; its name, other names and URLs are hints.
+`upcli recipe build --fetch` downloads a missing input from its URLs in
+order (HTTPS only, at most its size) and checks it before any step reads
+it; a library (`--library DIR`) is searched by size and hash first,
+whatever the files are called. Nothing downloaded is ever executed.
 
-| Table and key | Meaning |
-| --- | --- |
-| `[release]` `work` | the repository name under `unemu/media/ibm-pc/`: a short, stable, lower-case slug; upcli also gives it to the set's title record as its id |
-| `version` | the upstream version, lower case, no `-` |
-| `default_format` | the release's own format (`1.44M` for an archive without disks) |
-| `edition_slug`, `edition` | optional: the edition in the tag, and as the title states it |
-| `series`, `sort_title` | optional display fields |
-| `publishers`, `developers`, `genres` | non-empty lists |
-| `year` | the release year |
-| `platform` | a software platform upcli knows (`DOS`) |
-| `labels` | optional; should include a kind (`game`, `operating-system`, `application`, `utility`, `development`, `driver`) and a licence class (`open-source`, `freeware`, `shareware`, `public-domain`), or the check warns |
-| `license` | an SPDX expression, or one `LicenseRef-` for a vendor's own terms |
-| `terms` | the extra holding the licence text |
-| `source` | the extra holding the corresponding source; required unless `license` is one `LicenseRef-` |
-| `[[release.extra]]` | `path`, `sha256`, `dos_name` (DOS 8.3), `kind` (`document`, `archive`, `executable` or `other`) |
-| `[[set]]` | `title`, `description`, `format` (`1.44M`, `1.2M`, `720K`, `360K` or `iso-2048`), optional `revision` (from 1, the default) and `digest` (`sha256:...`, the set digest the pinned upcli gives) |
-| `[[set.disk]]` | `path`, `sha256`, `label`; in installer order |
+A **prepared input** is a file a recipe takes by hash that no step can
+make. The FreeDOS source archive is one: it needs an ISO 9660 reader, git
+and a tar writer. `recipes/media/freedos/source/build.sh` (with
+`iso-extract.py` and the helpers of `lib/source.sh`) makes it from pinned
+upstream inputs, in `nix develop`, and stops unless the result has the pin
+the three FreeDOS recipes take (`tests/recipes_test.py` keeps the two
+equal). The archive is a release asset of this repository, tag
+`freedos-1.4-floppy`, the URL the recipes name (created by the maintainer
+on 2026-11-20).
 
-The tag is derived, never written, in unemupc's tag grammar (its
-decision-38): `RELEASE-rN`, where the release is
-`VERSION[-EDITION_SLUG][-FORMAT]`, the format only when it is not the
-default one (`1.44m`, `1.2m`, `720k`, `360k`, `iso`), and `N` the revision.
-FreeDOS 1.4 gives `1.4-r1`, `1.4-1.2m-r1` and `1.4-720k-r1`. A tag that
-ends in `rN` never moves. The release alone (`1.4`) is an alias that names
-its newest revision: the pipeline pushes it after the revision. Once moving
-a set's alias to a newer revision is supported, a corrected set, metadata
-included, is the next revision (`revision = 2`, `1.4-r2`), which replaces
-the old set in its manifest while the old revision's tag stays on the
-registry. Until then the maintainer decides; before unemupc's first public
-release no further revision is published at all. A release names one set,
-so the check refuses two sets, in one manifest or across manifests, with
-one release.
+```sh
+nix develop --command bash recipes/media/freedos/source/build.sh
+# out/freedos-1.4-floppy-src/freedos-1.4-floppy-src.tar, as pinned
+```
 
-## Package manifests (firmware.toml)
+## The lock
 
-One package of unemupc's firmware catalogue,
-`unemu/firmware/ibm-pc/<catalogue id>`, as unemupc's own template build
-states it.
+`upcli recipe pin FILE` is the author's build: it builds the recipe as a
+draft, writes the artifact's manifest, config and metadata (a package: its
+README) into `FILE.lock/sha256/`, and its manifest digest into the recipe as
+`digest`. The lock holds no payload byte. Every later `upcli recipe build`
+makes the payload, checks each blob against the locked manifest, and
+publishes the locked manifest unchanged: a later upcli gives the pinned
+digest whatever it would write itself, and a step that no longer writes the
+same bytes fails the build. `upcli recipe conformance` builds every pinned
+recipe from libraries alone, without finding anything instead of making it,
+and compares the digests.
 
-| Table and key | Meaning |
-| --- | --- |
-| `[package]` `catalogue_id` | the catalogue entry the ROM is; also the repository name |
-| `revision` | a whole number from 1, raised only when the statement or metadata changes for the same ROM; the tag is `rN` (`r1`), which names no release and has no alias |
-| `digest` | optional: `sha256:...`, the package digest the pinned upcli gives |
-| `title`, `vendor`, `version` | 1 to 128 characters each |
-| `description` | one line, up to 4096 characters |
-| `labels` | non-empty list of lower-case ids |
-| `license` | the SPDX expression the catalogue records for the ROM |
-| `[rom]` | `path`, `sha256`: the ROM image |
-| `[source]` | `path` (a `.tar` or `.zip`), `sha256`: its corresponding source archive, the one the catalogue pins |
+A pinned recipe is never pinned again. To change a published set or
+package:
 
-A catalogue id has one manifest: a new revision replaces the old one in it,
-and the old revision's tag stays on the registry.
-
-## Writing build.sh
-
-A recipe starts with `set -euo pipefail`, sources `lib/recipe.sh`, stops
-early when `outputs_match` says the outputs are already there, and calls
-`work_dir`. A recipe whose helpers write files of their own (images, source
-tars, CRLF texts) exports its own `SOURCE_DATE_EPOCH` first; the library
-clears the caller's. No here-document or here-string longer than 512
-bytes: the devShell's bash hangs on them on macOS. The helpers:
-
-| Helper | What it does |
-| --- | --- |
-| `fetch DEST SHA256 MAX_BYTES URL...` | a verified download into the cache, mirrors tried in turn |
-| `fetch_release_assets` | a release's assets, fetched with the manifest's pins and staged unmodified (firmware recipes) |
-| `zip_expect_members`, `zip_extract` | check a zip's member list; extract one listed member, verified |
-| `fat_image` | a deterministic FAT floppy image |
-| `git_export` | the files of a pinned git commit |
-| `source_tar` | a deterministic source tar |
-| `crlf` | an LF text with CRLF line ends |
-| `outputs_match`, `check_outputs`, `install_outputs` | the pin checks, and the only way into `out/` |
-| `require_tools`, `sha256_of`, `check_sha256`, `stamp` | small utilities |
-
-The comment at the top of [`lib/recipe.sh`](../lib/recipe.sh) documents
-each one.
+- before unemupc's first public release, it is replaced under its tags:
+  remove `digest` and the lock and pin again with the same revision; then,
+  in this order, the prepared inputs it downloads are created or
+  confirmed, the change is merged (and tested on `unemu/experimental/`),
+  the maintainer deletes its old revision tag and, for a set, its release
+  alias on the registry, and it is published ([publishing.md](publishing.md),
+  Replacing a published set or package);
+- after it, raise `revision`, remove `digest` and the lock, and pin: the
+  next revision gets its own tag. Its release alias then has to move to
+  it, which the pipeline does not do yet ([publishing.md](publishing.md),
+  Names and tags).
 
 ## Adding a recipe
 
-1. Create `recipes/<recipe>/` with `build.sh` and a manifest. Pin every
-   input by SHA-256 in `build.sh`, preferring the upstream's own checksums
-   where it publishes them.
-2. Run it: `nix develop --command bash recipes/<recipe>/build.sh`. It stops
-   at the first output whose SHA-256 differs from its pin and names the
-   actual one. Review each output before you pin it.
-3. Remove `out/<recipe>/` and `cache/<recipe>/` and run it again: it must
-   install the same bytes, which the pins check.
-4. Check the manifest: `python3 -I lib/manifest.py check
-   recipes/<recipe>/<manifest>`, and the refs across all of them (the
-   [checks](../README.md#checks) do both).
-5. Measure the digests: run the dry run with `--allow-unpinned <recipe>`.
-   Each new set or package shows as `unpinned` with its digest; write that
-   digest into the manifest.
-6. Run the dry run again without `--allow-unpinned`: every row must read
-   `dry run`.
+1. Write the recipe in `recipes/media/<work>/` (with its work file) or
+   `recipes/firmware/`. `upcli recipe scaffold FILE...` prints the input
+   tables of files you have, and an archive's member list with sizes,
+   hashes and times.
+2. Check it: `upcli recipe check FILE`, then `upcli recipe show FILE`.
+3. Build the draft into a scratch store and review the result:
+   `upcli recipe build FILE --fetch --store DIR`, then `upcli image media
+   show` (or `image firmware show`) of the tag it prints.
+4. Pin it with the pinned upcli, in a fresh store: `upcli recipe pin FILE
+   --fetch --store DIR`.
+5. Pin a copy of the draft again from the first store's downloads alone
+   (`--library DIR/cache/downloads`, a new store): the recipe file and its
+   lock must be byte-identical (`diff -r`).
+6. `python3 -I lib/recipes.py check --cli UPCLI` and the dry run,
+   `python3 -I lib/publish.py --cli UPCLI --fetch FILE`: every row must
+   read `dry run`.
 
-See [publishing.md](publishing.md) for the pipeline and the pinned upcli.
+Run upcli with a fresh `HOME`, `LC_ALL=C` and `TZ=UTC`, as lib/publish.py
+does. See [publishing.md](publishing.md) for the pipeline and the pinned
+upcli.
+
+## Recipes on the registry
+
+upcli can publish a pinned recipe as an artifact of its own
+(`upcli recipe push`, to `unemu/recipes/<kind>/ibm-pc/<name>:<tag>`, the
+recipe file, its work file, its bundled texts and its lock, no payload).
+unemupc publishes no recipe before its recipe format is frozen (its
+decision-35, point 8), and neither does this repository: the sets and
+packages are published, their recipes are not yet. Publishing them will
+need a registry account that may write `unemu/recipes/**`, which is the
+maintainer's step.

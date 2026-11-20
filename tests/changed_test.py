@@ -40,20 +40,55 @@ GIT_ENV = {
 }
 
 
+def media(name, release, work=None, bundle=None):
+    """A minimal media recipe of unemu/media/ibm-pc/NAME."""
+    text = 'recipe = "0.1"\n'
+    if work:
+        text += f'work = "{work}"\n'
+    text += (f'\n[media]\nname = "unemu/media/ibm-pc/{name}"\nplatform = "ibm-pc"\n'
+             f'release = "{release}"\nrevision = 1\n')
+    if bundle:
+        text += f'\n[input.text]\nname = "{bundle}"\nsize = 1\nsha256 = "{"a" * 64}"\nbundle = true\n'
+    return text
+
+
+FIRMWARE = 'recipe = "0.1"\n\n[firmware]\nname = "unemu/firmware/ibm-pc/demo-bios"\nplatform = "ibm-pc"\nrevision = 1\n'
+
+ALPHA = "recipes/media/alpha/alpha-1.0.media.toml"
+ALPHA_720K = "recipes/media/alpha/alpha-1.0-720k.media.toml"
+BETA = "recipes/media/beta/beta-2.media.toml"
+BIOS = "recipes/firmware/demo-bios.firmware.toml"
+SCRIPT_PATH = "recipes/media/alpha/source/build.sh"
+EVERY = [BIOS, ALPHA_720K, ALPHA, BETA]
+
+
 class Repository:
-    """A git repository with three recipes, a library and docs."""
+    """A git repository with four recipes (two of one work, with a work file,
+    a bundled text and a prepared-input script), a library and docs."""
 
     def __init__(self, directory):
         self.root = pathlib.Path(directory) / "repo"
         self.root.mkdir()
         self.git("init", "-q", "-b", "main")
-        for path in ("recipes/alpha/build.sh", "recipes/alpha/media.toml",
-                     "recipes/beta/build.sh", "recipes/beta/firmware.toml", "recipes/beta/helper.py",
-                     "recipes/gamma/build.sh", "recipes/gamma/media.toml",
-                     "lib/recipe.sh", "lib/publish.py", "flake.nix", "flake.lock", "upcli.toml",
-                     "docs/recipes.md", "tests/publish_test.py", "README.md", "AGENTS.md",
+        files = {
+            ALPHA: media("alpha", "1.0", work="alpha", bundle="licenses.txt"),
+            ALPHA + ".lock/sha256/" + "1" * 64: "lock\n",
+            ALPHA_720K: media("alpha", "1.0-720k", work="alpha", bundle="licenses.txt"),
+            "recipes/media/alpha/alpha.work.toml": 'recipe = "0.1"\n\n[work]\nid = "alpha"\n',
+            "recipes/media/alpha/licenses.txt": "licences\n",
+            "recipes/media/alpha/notes.txt": "notes\n",
+            SCRIPT_PATH: "#!/usr/bin/env bash\n",
+            "recipes/media/alpha/source/helper.py": "pass\n",
+            BETA: media("beta", "2"),
+            "recipes/media/beta/licenses.txt": "not bundled by beta\n",
+            BIOS: FIRMWARE,
+        }
+        for path in ("lib/source.sh", "lib/publish.py", "lib/recipes.py", "flake.nix", "flake.lock",
+                     "upcli.toml", "docs/recipes.md", "tests/publish_test.py", "README.md", "AGENTS.md",
                      ".github/workflows/check.yml"):
-            self.write(path, f"{path}\n")
+            files[path] = f"{path}\n"
+        for path, text in files.items():
+            self.write(path, text)
         self.first = self.commit("first")
 
     def write(self, path, text):
@@ -72,11 +107,12 @@ class Repository:
         return self.git("rev-parse", "HEAD")
 
     def change(self, *paths, remove=(), message="change"):
-        """A commit that edits PATHS and removes REMOVE; its id."""
+        """A commit that edits PATHS (a TOML comment, so recipes still
+        parse) and removes REMOVE; its id."""
         for path in paths:
             full = self.root / path
             previous = full.read_text(encoding="utf-8") if full.exists() else ""
-            self.write(path, previous + "changed\n")
+            self.write(path, previous + "# changed\n")
         for path in remove:
             self.git("rm", "-q", "-r", path)
         return self.commit(message)
@@ -90,8 +126,8 @@ class Repository:
                 code = stop.code
         return code, stdout.getvalue(), stderr.getvalue()
 
-    def selected(self, base, head="HEAD"):
-        code, stdout, stderr = self.run(base, head)
+    def selected(self, base, head="HEAD", *options):
+        code, stdout, stderr = self.run(*options, base, head)
         if code != 0:
             raise AssertionError(f"exit {code}: {stderr}")
         return stdout.split()
@@ -104,29 +140,49 @@ class Changed(unittest.TestCase):
         self.repo = Repository(self._directory.name)
 
     def test_a_recipe_change_selects_that_recipe(self):
-        self.repo.change("recipes/beta/helper.py")
-        self.assertEqual(self.repo.selected(self.repo.first), ["beta"])
-        self.repo.change("recipes/gamma/media.toml", "recipes/alpha/build.sh")
-        self.assertEqual(self.repo.selected(self.repo.first), ["alpha", "beta", "gamma"])
+        self.repo.change(BETA)
+        self.assertEqual(self.repo.selected(self.repo.first), [BETA])
+        self.repo.change(ALPHA, BIOS)
+        self.assertEqual(self.repo.selected(self.repo.first), [BIOS, ALPHA, BETA])
         # Only the change between the two commits counts.
-        self.assertEqual(self.repo.selected("HEAD~1"), ["alpha", "gamma"])
+        self.assertEqual(self.repo.selected("HEAD~1"), [BIOS, ALPHA])
         self.assertEqual(self.repo.selected("HEAD"), [])
 
+    def test_its_lock_bundled_inputs_and_work_file_select_a_recipe(self):
+        for path, expected in (
+            (ALPHA + ".lock/sha256/" + "1" * 64, [ALPHA]),
+            (ALPHA + ".lock/sha256/" + "2" * 64, [ALPHA]),
+            ("recipes/media/alpha/licenses.txt", [ALPHA_720K, ALPHA]),
+            ("recipes/media/alpha/alpha.work.toml", [ALPHA_720K, ALPHA]),
+            # beta bundles nothing and names no work.
+            ("recipes/media/beta/licenses.txt", []),
+            ("recipes/media/beta/beta.work.toml", []),
+            # Neither a recipe's input nor its work file.
+            ("recipes/media/alpha/notes.txt", []),
+            (SCRIPT_PATH, []),
+            ("recipes/media/alpha/source/helper.py", []),
+            ("recipes/README.md", []),
+        ):
+            with self.subTest(path):
+                before = self.repo.git("rev-parse", "HEAD")
+                self.repo.change(path)
+                self.assertEqual(self.repo.selected(before), expected)
+
     def test_a_shared_input_selects_every_recipe(self):
-        for path in ("lib/recipe.sh", "lib/new-helper.py", "flake.nix", "flake.lock", "upcli.toml",
+        for path in ("lib/source.sh", "lib/new-helper.py", "lib/publish.py", "upcli.toml",
                      ".github/workflows/check.yml", ".github/workflows/new.yml"):
             with self.subTest(path):
                 before = self.repo.git("rev-parse", "HEAD")
                 self.repo.change(path)
                 code, stdout, stderr = self.repo.run(before, "HEAD")
                 self.assertEqual(code, 0, stderr)
-                self.assertEqual(stdout.split(), ["alpha", "beta", "gamma"])
+                self.assertEqual(stdout.split(), EVERY)
                 self.assertIn("a shared input changed", stderr)
 
-    def test_documentation_and_tests_select_nothing(self):
-        for path in ("docs/recipes.md", "docs/new.md", "tests/publish_test.py", "tests/fixtures/x/media.toml",
-                     "README.md", "AGENTS.md", ".github/dependabot.yml", "recipes/README.md",
-                     "librarian/x", "lib.md", "flake.nix.orig"):
+    def test_documentation_tests_and_the_toolchain_select_nothing(self):
+        for path in ("docs/recipes.md", "docs/new.md", "tests/publish_test.py", "README.md", "AGENTS.md",
+                     ".github/dependabot.yml", "librarian/x", "lib.md", "flake.nix", "flake.lock",
+                     "flake.nix.orig"):
             with self.subTest(path):
                 before = self.repo.git("rev-parse", "HEAD")
                 self.repo.change(path)
@@ -134,35 +190,64 @@ class Changed(unittest.TestCase):
                 self.assertEqual((code, stdout, stderr), (0, "", ""))
 
     def test_a_deleted_recipe_is_not_selected(self):
-        self.repo.change(remove=["recipes/alpha"])
+        self.repo.change(remove=[BETA])
         self.assertEqual(self.repo.selected(self.repo.first), [])
-        self.repo.change("recipes/beta/build.sh", remove=["recipes/gamma/media.toml"])
-        # gamma lost its manifest: it is no recipe any more.
-        self.assertEqual(self.repo.selected(self.repo.first), ["beta"])
+        self.repo.change(ALPHA, remove=[ALPHA_720K])
+        self.assertEqual(self.repo.selected(self.repo.first), [ALPHA])
 
     def test_a_renamed_recipe_is_selected_under_its_new_name(self):
-        self.repo.git("mv", "recipes/alpha", "recipes/delta")
+        new = "recipes/media/beta/beta-2.1.media.toml"
+        self.repo.git("mv", BETA, new)
         self.repo.commit("rename")
-        self.assertEqual(self.repo.selected(self.repo.first), ["delta"])
+        self.assertEqual(self.repo.selected(self.repo.first), [new])
 
-    def test_a_file_moved_out_of_a_recipe_selects_it(self):
-        # git would see a rename (the same bytes) and name only the new path,
-        # docs/notes.md; the recipe lost a file all the same.
-        self.repo.write("recipes/alpha/notes.md", "notes of the alpha recipe\n" * 20)
-        before = self.repo.commit("notes")
-        self.repo.git("mv", "recipes/alpha/notes.md", "docs/notes.md")
-        self.repo.commit("move the notes")
-        self.assertEqual(self.repo.selected(before), ["alpha"])
+    def test_files_that_are_no_recipes(self):
+        for path, expected in (("recipes/media/alpha/alpha.toml", []), ("recipes/media/.hidden/x.media.toml", []),
+                               ("recipes/x.firmware.toml.bak", []), ("elsewhere/x.media.toml", []),
+                               # No recipe of its own, but a file of alpha's lock.
+                               (ALPHA + ".lock/x.media.toml", [ALPHA])):
+            with self.subTest(path):
+                before = self.repo.git("rev-parse", "HEAD")
+                self.repo.write(path, FIRMWARE)
+                self.repo.commit("no recipe")
+                self.assertEqual(self.repo.selected(before), expected)
+        self.assertEqual(self.repo.run("--all")[1].split(), EVERY)
+        # A recipe file that does not parse still counts, by its own path.
+        before = self.repo.git("rev-parse", "HEAD")
+        self.repo.write("recipes/firmware/broken.firmware.toml", "not toml [\n")
+        self.repo.commit("broken")
+        self.assertEqual(self.repo.selected(before), ["recipes/firmware/broken.firmware.toml"])
 
-    def test_a_directory_without_a_manifest_is_no_recipe(self):
-        self.repo.change("recipes/wip/build.sh")
-        self.assertEqual(self.repo.selected(self.repo.first), [])
-        code, stdout, _ = self.repo.run("--all")
-        self.assertEqual((code, stdout.split()), (0, ["alpha", "beta", "gamma"]))
-        self.repo.change("recipes/wip/firmware.toml")
-        self.assertEqual(self.repo.selected(self.repo.first), ["wip"])
+    def test_sources(self):
+        for path, expected in (
+            ("recipes/media/alpha/source/helper.py", [SCRIPT_PATH]),
+            (SCRIPT_PATH, [SCRIPT_PATH]),
+            ("recipes/media/alpha/licenses.txt", [SCRIPT_PATH]),
+            ("recipes/media/alpha/notes.txt", [SCRIPT_PATH]),
+            # A recipe, its lock and its work file are no input of the script.
+            (ALPHA, []),
+            (ALPHA + ".lock/sha256/" + "1" * 64, []),
+            ("recipes/media/alpha/alpha.work.toml", []),
+            ("recipes/media/beta/licenses.txt", []),
+            ("lib/publish.py", []),
+            ("upcli.toml", []),
+            ("docs/recipes.md", []),
+        ):
+            with self.subTest(path):
+                before = self.repo.git("rev-parse", "HEAD")
+                self.repo.change(path)
+                self.assertEqual(self.repo.selected(before, "HEAD", "--sources"), expected)
+        for path in ("lib/source.sh", "flake.nix", "flake.lock", ".github/workflows/check.yml"):
+            with self.subTest(path):
+                before = self.repo.git("rev-parse", "HEAD")
+                self.repo.change(path)
+                code, stdout, stderr = self.repo.run("--sources", before, "HEAD")
+                self.assertEqual((code, stdout.split()), (0, [SCRIPT_PATH]), stderr)
+                self.assertIn("a shared input changed", stderr)
+        code, stdout, _ = self.repo.run("--sources", "--all")
+        self.assertEqual((code, stdout.split()), (0, [SCRIPT_PATH]))
 
-    def test_the_null_base_and_an_unknown_base_select_every_recipe(self):
+    def test_the_null_base_and_an_unknown_base_select_everything(self):
         self.repo.change("docs/recipes.md")
         for base, note in ((ZERO, "null commit"), ("0" * 64, "null commit"),
                            ("1234567890abcdef1234567890abcdef12345678", "not a commit here"),
@@ -170,8 +255,10 @@ class Changed(unittest.TestCase):
             with self.subTest(base):
                 code, stdout, stderr = self.repo.run(base, "HEAD")
                 self.assertEqual(code, 0, stderr)
-                self.assertEqual(stdout.split(), ["alpha", "beta", "gamma"])
+                self.assertEqual(stdout.split(), EVERY)
                 self.assertIn(note, stderr)
+                code, stdout, stderr = self.repo.run("--sources", base, "HEAD")
+                self.assertEqual(stdout.split(), [SCRIPT_PATH])
         # Not quite the null commit: an ordinary (unknown) name.
         code, stdout, stderr = self.repo.run("0" * 39, "HEAD")
         self.assertIn("not a commit here", stderr)
@@ -185,35 +272,40 @@ class Changed(unittest.TestCase):
             self.assertIn("is not a commit", stderr)
 
     def test_the_answer_comes_from_the_commits_not_the_working_tree(self):
-        head = self.repo.change("recipes/alpha/build.sh")
-        self.repo.write("recipes/beta/build.sh", "uncommitted\n")
-        self.repo.write("lib/recipe.sh", "uncommitted\n")
-        self.repo.write("recipes/new/media.toml", "uncommitted\n")
-        self.assertEqual(self.repo.selected(self.repo.first, head), ["alpha"])
+        head = self.repo.change(BETA)
+        self.repo.write(ALPHA, "uncommitted\n")
+        self.repo.write("lib/publish.py", "uncommitted\n")
+        self.repo.write("recipes/media/new/new-1.media.toml", media("new", "1"))
+        self.assertEqual(self.repo.selected(self.repo.first, head), [BETA])
         code, stdout, _ = self.repo.run("--all", self.repo.first)
-        self.assertEqual(stdout.split(), ["alpha", "beta", "gamma"])
-        # An older HEAD: the recipes of that commit. (This commit takes the
-        # files written above too.)
-        self.repo.change("recipes/epsilon/media.toml")
-        self.assertEqual(self.repo.run("--all", head)[1].split(), ["alpha", "beta", "gamma"])
-        self.assertEqual(self.repo.run("--all")[1].split(), ["alpha", "beta", "epsilon", "gamma", "new"])
+        self.assertEqual(stdout.split(), EVERY)
+        # The work file a recipe names is read at HEAD, not from the working
+        # tree: alpha names "alpha" at HEAD.
+        self.repo.write(ALPHA, media("alpha", "1.0", work="other"))
+        before = self.repo.git("rev-parse", "HEAD")
+        self.repo.git("add", "recipes/media/alpha/alpha.work.toml")
+        self.repo.write("recipes/media/alpha/alpha.work.toml", 'recipe = "0.1"\n# edited\n')
+        self.repo.git("add", "recipes/media/alpha/alpha.work.toml")
+        self.repo.git("commit", "-q", "-m", "work file only")
+        self.assertEqual(self.repo.selected(before), [ALPHA_720K, ALPHA])
 
     def test_json(self):
-        self.repo.change("recipes/beta/build.sh")
+        self.repo.change(BETA)
         code, stdout, _ = self.repo.run("--json", self.repo.first, "HEAD")
-        self.assertEqual((code, json.loads(stdout)), (0, ["beta"]))
+        self.assertEqual((code, json.loads(stdout)), (0, [BETA]))
         code, stdout, _ = self.repo.run("--json", "HEAD", "HEAD")
         self.assertEqual((code, stdout), (0, "[]\n"))
         code, stdout, _ = self.repo.run("--json", "--all")
-        self.assertEqual(json.loads(stdout), ["alpha", "beta", "gamma"])
+        self.assertEqual(json.loads(stdout), EVERY)
 
     def test_git_settings_of_the_caller_do_not_count(self):
-        self.repo.change("recipes/beta/build.sh")
+        self.repo.change(BETA)
         other = pathlib.Path(self._directory.name) / "other"
         other.mkdir()
-        environ = dict(GIT_ENV, GIT_DIR=str(other), GIT_WORK_TREE=str(other), GIT_CONFIG_PARAMETERS="'diff.relative=true'")
+        environ = dict(GIT_ENV, GIT_DIR=str(other), GIT_WORK_TREE=str(other),
+                       GIT_CONFIG_PARAMETERS="'diff.relative=true'")
         code, stdout, stderr = self.repo.run(self.repo.first, "HEAD", environ=environ)
-        self.assertEqual((code, stdout.split()), (0, ["beta"]), stderr)
+        self.assertEqual((code, stdout.split()), (0, [BETA]), stderr)
 
     def test_usage_errors(self):
         for args in ((), ("HEAD",), ("a", "b", "c"), ("--all", "a", "b"), ("--bogus",),

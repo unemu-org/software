@@ -3,17 +3,18 @@
 Reproducible builds of the open installation media sets
 (`unemu/media/ibm-pc/<work>:<release>-rN`) and open firmware packages
 (`unemu/firmware/ibm-pc/<catalogue id>:rN`) of the unemu emulators. Each
-one is built from a pinned upstream release, carries its licences and
-corresponding sources, and is published as an OCI artifact for
-[unemupc](https://github.com/unemu-org/unemupc), whose library and machine
-templates pull them.
+one is a recipe file of [unemupc](https://github.com/unemu-org/unemupc)'s
+CLI, `upcli`: pinned upstream inputs, its licences and corresponding
+sources, and a lock that pins every byte of the OCI artifact it builds,
+which unemupc's library and machine templates pull.
 
 ## Principles
 
 - **Bytes as released.** Disk images and ROMs are the upstream bytes, and
   files placed on a built image are unmodified.
-- **Everything pinned.** Every input and output by SHA-256, every set and
-  package by its digest, and the CLI that imports them by its release.
+- **Everything pinned.** Every input by size and SHA-256, every set and
+  package by its digest and lock, and the CLI that builds them by its
+  release.
 - **Open only when every part is covered.** Real SPDX licences, a licence
   index for every program of a set, and the corresponding source of
   copyleft content; when in doubt, nothing is published.
@@ -28,22 +29,22 @@ The full rules are in [AGENTS.md](AGENTS.md).
 ## Quick start
 
 ```sh
-nix develop                                       # the pinned toolchain
-bash recipes/freedos-1.4-floppy/build.sh          # build one recipe into out/
-python3 -I lib/upcli.py fetch out/upcli           # the pinned upcli, verified
-python3 -I lib/publish.py --cli out/upcli/upcli   # build, import and check all
+python3 -I lib/upcli.py fetch out/upcli                 # the pinned upcli, verified
+python3 -I lib/recipes.py check --cli out/upcli/upcli   # check every recipe
+python3 -I lib/publish.py --cli out/upcli/upcli --fetch # build all against their locks, dry run
 ```
 
-The dry run needs no credentials and never contacts a registry; once the
-recipes are built, it needs no network at all.
+Python 3.11 or later; `nix develop` provides it. The dry run needs no
+credentials and never contacts a registry; it downloads the recipes' inputs
+from the URLs they pin, each checked by size and SHA-256.
 
 ## Publishing
 
 `lib/publish.py --push` pushes only when every selected set and package
-passed its checks and its manifest pins its digest. The registry
-credentials come from the environment and reach only the `upcli image push`
-call. A revision tag never moves: one that already holds another digest
-is refused, and `--move` is never used. Each set's release alias is pushed
+passed its checks and its recipe pins its digest. The registry credentials
+come from the environment and reach only the `upcli image push` call. A
+revision tag never moves: one that already holds another digest is
+refused, and `--move` is never used. Each set's release alias is pushed
 after its revision, and refused, never moved, when it names another image;
 sets and packages have no `latest`. For CI, `--experimental RUN` targets
 `unemu/experimental/` instead. Pushing is the maintainer's step. Details:
@@ -56,15 +57,16 @@ published.
 
 ## Repository layout
 
-- `recipes/<recipe>/`: one per upstream release, a `build.sh` and its
-  manifest ([docs/recipes.md](docs/recipes.md)).
-- `lib/recipe.sh`, `lib/manifest.py`: the recipe helpers and the manifest
-  checker.
-- `lib/publish.py`, `lib/upcli.py`, `upcli.toml`: the publish pipeline and
-  the pinned upcli ([docs/publishing.md](docs/publishing.md)).
-- `lib/changed.py`, `.github/workflows/`: the CI and the recipes a change
-  touches.
-- `tests/`: offline tests and example manifests.
+- `recipes/media/<work>/`: the recipes of one work (one repository), its
+  work file, its bundled texts and the locks; `recipes/firmware/`: one
+  recipe per firmware package ([docs/recipes.md](docs/recipes.md)).
+- `recipes/media/freedos/source/`: the script that makes the FreeDOS source
+  archive, a prepared input; `lib/source.sh`: its helpers.
+- `lib/publish.py`, `lib/recipes.py`, `lib/upcli.py`, `upcli.toml`: the
+  publish pipeline, the recipe files as it reads them, and the pinned upcli
+  ([docs/publishing.md](docs/publishing.md)).
+- `lib/changed.py`, `.github/workflows/`: the CI and what a change touches.
+- `tests/`: offline tests.
 - `docs/`: the reference documentation.
 - `cache/`, `build/`, `out/`: downloads, scratch and outputs; never
   committed.
@@ -75,19 +77,13 @@ Run inside the devShell:
 
 ```sh
 nix develop --command bash -c '
-  shellcheck -x lib/recipe.sh tests/*.sh recipes/*/build.sh &&
-  bash tests/recipe-selftest.sh &&
-  python3 -I tests/manifest_test.py &&
-  python3 -I tests/publish_test.py &&
-  python3 -I tests/upcli_test.py &&
-  python3 -I tests/iso_extract_test.py &&
-  python3 -I tests/changed_test.py &&
-  for m in tests/fixtures/*/media.toml tests/fixtures/*/firmware.toml \
-      recipes/*/media.toml recipes/*/firmware.toml; do
-    python3 -I lib/manifest.py check "$m" || exit 1
-  done &&
-  python3 -I lib/manifest.py refs recipes/*/media.toml recipes/*/firmware.toml'
+  shellcheck -x lib/source.sh tests/*.sh recipes/*/*/source/build.sh &&
+  bash tests/source-selftest.sh &&
+  for test in tests/*_test.py; do python3 -I "$test" || exit 1; done'
 ```
+
+and, with the pinned upcli, `python3 -I lib/recipes.py check --cli
+out/upcli/upcli`.
 
 ## Licence
 

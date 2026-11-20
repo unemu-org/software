@@ -28,7 +28,7 @@ one exception AGENTS.md states to "never execute anything from a download":
     bytes everything below uses. A cached copy is read and checked that way
     on every run, and a wrong one is refused, never replaced. Otherwise the
     archive is downloaded from the release over HTTPS (curl, with the flags
-    and limits of lib/recipe.sh's fetch) into a temporary directory, and
+    and limits of lib/source.sh's fetch) into a temporary directory, and
     only once checked are its bytes written into the cache.
  2. Those bytes give up one member only, unemupc-<version>-<triple>/upcli:
     it must be the archive's one member of that name, a regular file (no
@@ -94,7 +94,7 @@ PIN_KEYS = ("commit", "tag", "version", "archive")
 ARCHIVE_KEYS = ("file", "sha256", "size", "upcli_sha256", "upcli_size")
 MAX_ARCHIVE = 512 * 1024 * 1024
 MAX_BINARY = 256 * 1024 * 1024
-# The download's limits, as lib/recipe.sh's fetch sets them.
+# The download's limits, as lib/source.sh's fetch sets them.
 CONNECT_TIMEOUT = 20
 FETCH_MAX_TIME = 1800
 # How long `upcli --version` may take.
