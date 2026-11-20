@@ -718,7 +718,7 @@ class Digests(Case):
         for text, fragment in (
             ("not toml [", "not a TOML recipe"),
             ('recipe = "0.1"\n[firmware]\nname = "unemu/firmware/ibm-pc/x"\nrevision = 1\n', "one identity table"),
-            ('recipe = "0.1"\n[media]\nname = "private/media/ibm-pc/x"\nrevision = 1\n', "not under unemu/media/"),
+            ('recipe = "0.1"\n[media]\nname = "other/media/ibm-pc/x"\nrevision = 1\n', "not under unemu/media/"),
             ('recipe = "0.1"\n[media]\nname = "unemu/media/ibm-pc/x"\nrelease = "1.0-r2"\nrevision = 1\n',
              "is not a release"),
             ('recipe = "0.1"\n[media]\nname = "unemu/media/ibm-pc/x"\nrevision = 0\n', "not a whole number"),
@@ -755,6 +755,77 @@ class Digests(Case):
         code, _, stderr = self.repo.run()
         self.assertEqual(code, 0, stderr)
         self.assertIn("warning: drift: title.synopsis", stderr)
+
+
+class Private(Case):
+    def add_private(self, kind="media", folder="recipes/private/media/demo"):
+        path = f"{folder}/private.{kind}.toml"
+        target = self.repo.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        text = (f'recipe = "0.1"\n[{kind}]\nname = "private/{kind}/ibm-pc/demo"\n'
+                f'platform = "ibm-pc"\nrevision = 1\ndigest = "sha256:{"d" * 64}"\n')
+        if kind == "media":
+            text += 'release = "1.0"\n'
+        text += f'\n[input.game]\nname = "DEMO.IMG"\nsize = 737280\nsha256 = "{"a" * 64}"\n'
+        target.write_text(text)
+        return path, f"private/{kind}/ibm-pc/demo:" + ("1.0-r1" if kind == "media" else "r1")
+
+    def test_default_skips_private_in_all_modes(self):
+        self.repo.media()
+        self.add_private()
+        self.add_private("firmware", "recipes/private/firmware")
+        report = self.repo.base / "report.json"
+        for extra in ((), ("--fetch",), ("--skip-published",), ("--experimental", "42", "--fetch"), ("--push",)):
+            with self.subTest(extra=extra):
+                self.repo.log.unlink(missing_ok=True)
+                self.repo.registry.calls.clear()
+                code, _, stderr = self.repo.run(*extra, "--report", str(report))
+                self.assertEqual(code, 0, stderr)
+                self.assertEqual(self.repo.builds(), [M1, M2])
+                self.assertEqual([r["recipe"] for r in json.loads(report.read_text())], [M1, M2])
+                for call in self.repo.calls():
+                    self.assertFalse(any("private/" in arg for arg in call["argv"]), call)
+                self.assertTrue(all(not repository.startswith("private/")
+                                    for _, repository, _ in self.repo.registry.calls))
+
+    def test_explicit_private_file_ref_and_mixed_folder_refused(self):
+        self.repo.media()
+        private, ref = self.add_private(folder="recipes/media/demo")
+        firmware, firmware_ref = self.add_private("firmware", "recipes/private/firmware")
+        store = self.repo.base / "untrusted-store"
+        store.mkdir()
+        for selector in (private, ref, firmware, firmware_ref, "recipes/media/demo", "recipes"):
+            for mode in ((), ("--fetch",), ("--experimental", "42"), ("--push",),
+                         ("--no-build", "--store", str(store), "--push")):
+                with self.subTest(selector=selector, mode=mode):
+                    code, _, stderr = self.repo.run(*mode, selector)
+                    self.assertEqual(code, 2, stderr)
+                    self.assertIn("private recipes are static check only; never built, fetched or published", stderr)
+                    self.assertEqual(self.repo.calls(), [])
+                    self.assertEqual(self.repo.registry.calls, [])
+                    self.assertEqual(list(store.iterdir()), [])
+
+    def test_no_build_reads_only_the_open_store(self):
+        self.repo.media()
+        store = self.repo.base / "store"
+        code, _, stderr = self.repo.run("--store", str(store))
+        self.assertEqual(code, 0, stderr)
+        self.add_private()
+        self.repo.log.unlink()
+        code, _, stderr = self.repo.run("--no-build", "--store", str(store), "--push")
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(self.repo.builds(), [])
+        for call in self.repo.calls():
+            self.assertFalse(any("private/" in arg for arg in call["argv"]), call)
+
+    def test_only_private_is_an_empty_success_without_an_implicit_check(self):
+        self.add_private()
+        report = self.repo.base / "report.json"
+        code, _, stderr = self.repo.run("--fetch", "--skip-published", "--report", str(report))
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual([c["argv"] for c in self.repo.calls()], [["--version"]])
+        self.assertEqual(json.loads(report.read_text()), [])
+        self.assertEqual(self.repo.registry.calls, [])
 
 
 class Pin(Case):

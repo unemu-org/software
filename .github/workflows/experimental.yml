@@ -18,7 +18,7 @@ name: experimental
 on:
   push:
     branches: [main]
-  # Every recipe; still only what is not published yet.
+  # Every open recipe; still only what is not published yet.
   workflow_dispatch:
 
 permissions:
@@ -64,9 +64,9 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           if [ "$EVENT" = push ]; then
-            selection="$(python3 -I lib/changed.py --json "$BEFORE" HEAD)"
+            selection="$(python3 -I lib/changed.py --json --open-only "$BEFORE" HEAD)"
           else
-            selection="$(python3 -I lib/changed.py --json --all)"
+            selection="$(python3 -I lib/changed.py --json --open-only --all)"
           fi
           echo "selected: $selection"
           echo "selection=$selection" >> "$GITHUB_OUTPUT"

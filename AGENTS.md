@@ -17,6 +17,13 @@ CLI `upcli`, beads prefix `upc`), whose recipe files (`upcli recipe check`, `pin
 and the publication rules. Every set and package is a upcli recipe file in
 `recipes/` with its lock; see `README.md` and `docs/recipes.md`.
 
+The repository also holds **private recipes** for commercial and other non-open
+titles: metadata, sizes, SHA-256s, dump database ids and steps, with no `[license]`
+and no input URLs. Their outputs are named under `private/media/ibm-pc/<work>` or
+`private/firmware/ibm-pc/<id>`. Only the descriptions and locks live here, never
+the title's files; users build from their own libraries. These recipes receive
+static checks only: the repository never builds, fetches or publishes their outputs.
+
 ## Language
 
 - Talk to the maintainer in Polish.

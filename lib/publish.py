@@ -46,7 +46,10 @@ asked.
     RECIPE|FOLDER|REF   a recipe file (recipes/media/freedos/freedos-1.4.media.toml),
                         a folder of recipes (recipes/media/freedos), or one
                         set's or package's ref (unemu/media/ibm-pc/freedos:1.4-r1,
-                        unemu/firmware/ibm-pc/<id>:r1); default: every recipe
+                        unemu/firmware/ibm-pc/<id>:r1); default: every open recipe
+
+Private recipes are descriptions only. The default skips them; an explicit
+selection including one is refused before any upcli or registry call.
 
 A recipe (lib/recipes.py, docs/recipes.md) is a recipe file of upcli: one
 set or package, its ref <repository>:<tag> from its identity table. Tags
@@ -556,6 +559,9 @@ def check_recipes(cli, root, every, env):
     """`upcli recipe check` over every recipe file: a finding is a Failure.
     Drift is reported: a build writes the lock's record, whatever the work
     file says now."""
+    if not every:
+        log("no open recipes to check")
+        return
     done = run_cli(cli, ["recipe", "check", *(str(root / r.path) for r in every)], env)
     for line in done.stdout.splitlines():
         if line.strip().startswith(recipes.DRIFT):
@@ -837,8 +843,11 @@ def find_cli(parser, cli, environ):
 
 
 def select(parser, root, selectors):
-    """Every recipe read (lib/recipes.py), and the selected sets and
-    packages as Items (without a target yet), in recipe order."""
+    """Read every recipe, but pass only open ones to upcli.
+
+    An explicit selector that includes a private recipe is refused before
+    any upcli invocation, registry read or store access.
+    """
     log("== read the recipes")
     try:
         every = recipes.load(root)
@@ -849,9 +858,11 @@ def select(parser, root, selectors):
     if not every:
         raise Failure(f"no recipes in {root / recipes.RECIPES}")
     for recipe in every:
-        log(f"{recipe.path}: {recipe.ref}{'' if recipe.digest else ' (a draft)'}")
+        log(f"{recipe.path}: {recipe.ref}{' (private: static check only)' if recipe.private else ''}"
+            f"{'' if recipe.digest else ' (a draft)'}")
+    open_recipes = [r for r in every if not r.private]
     if not selectors:
-        chosen = every
+        chosen = open_recipes
     else:
         wanted = set()
         for selector in selectors:
@@ -860,9 +871,13 @@ def select(parser, root, selectors):
             if not path or not matching:
                 parser.error(f"{selector!r} is neither a recipe, a folder of recipes nor a ref "
                              "(unemu/media/ibm-pc/<work>:<release>-rN or unemu/firmware/ibm-pc/<id>:rN)")
+            private = [r.path for r in matching if r.private]
+            if private:
+                parser.error("private recipes are static check only; never built, fetched or published: "
+                             + ", ".join(private))
             wanted.update(r.path for r in matching)
-        chosen = [r for r in every if r.path in wanted]
-    return every, [Item(r, "", "") for r in chosen]
+        chosen = [r for r in open_recipes if r.path in wanted]
+    return open_recipes, [Item(r, "", "") for r in chosen]
 
 
 def experimental_tag(tag, run):

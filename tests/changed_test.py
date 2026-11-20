@@ -10,9 +10,11 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -47,12 +49,14 @@ def media(name, release, work=None, bundle=None):
         text += f'work = "{work}"\n'
     text += (f'\n[media]\nname = "unemu/media/ibm-pc/{name}"\nplatform = "ibm-pc"\n'
              f'release = "{release}"\nrevision = 1\n')
+    text += '\n[license]\nexpression = "GPL-2.0-or-later"\n'
     if bundle:
         text += f'\n[input.text]\nname = "{bundle}"\nsize = 1\nsha256 = "{"a" * 64}"\nbundle = true\n'
     return text
 
 
-FIRMWARE = 'recipe = "0.1"\n\n[firmware]\nname = "unemu/firmware/ibm-pc/demo-bios"\nplatform = "ibm-pc"\nrevision = 1\n'
+FIRMWARE = ('recipe = "0.1"\n\n[firmware]\nname = "unemu/firmware/ibm-pc/demo-bios"\nplatform = "ibm-pc"\n'
+            'revision = 1\n\n[license]\nexpression = "GPL-2.0-or-later"\n')
 
 ALPHA = "recipes/media/alpha/alpha-1.0.media.toml"
 ALPHA_720K = "recipes/media/alpha/alpha-1.0-720k.media.toml"
@@ -133,11 +137,129 @@ class Repository:
         return stdout.split()
 
 
+def workflow_run(workflow, step):
+    """The literal shell body of a named workflow step, without a YAML dependency."""
+    text = (SCRIPT.parent.parent / ".github/workflows" / workflow).read_text()
+    after = text.split(f"      - name: {step}\n", 1)[1].split("        run: ", 1)[1]
+    if not after.startswith("|\n"):
+        return after.splitlines()[0] + "\n"
+    after = after[2:]
+    lines = []
+    for line in after.splitlines():
+        if line.strip() and not line.startswith("          "):
+            break
+        lines.append(line)
+    return textwrap.dedent("\n".join(lines)) + "\n"
+
+
+class WorkflowSelection(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Repository(temporary.name)
+        self.private = "recipes/private/media/demo/demo.media.toml"
+        text = media("demo", "1.0").replace("unemu/media/", "private/media/").replace(
+            '\n[license]\nexpression = "GPL-2.0-or-later"\n', "")
+        self.repo.write(self.private, text)
+        self.repo.change(BETA)
+        # Run the actual selection code from the working tree, while it
+        # reads recipe blobs only from the fixture's committed trees.
+        for name in ("changed.py", "recipes.py"):
+            shutil.copyfile(SCRIPT.parent / name, self.repo.root / "lib" / name)
+
+    def selection(self, workflow, step, event):
+        script = self.repo.root / "selection.sh"
+        script.write_text(workflow_run(workflow, step))
+        output = self.repo.root / "outputs"
+        output.write_text("")
+        env = dict(GIT_ENV, EVENT=event, PR_BASE=self.repo.first, BEFORE=self.repo.first,
+                   GITHUB_OUTPUT=str(output))
+        done = subprocess.run(["bash", "-euo", "pipefail", str(script)], cwd=self.repo.root,
+                              env=env, capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return {key: json.loads(value) for key, _, value in
+                (line.partition("=") for line in output.read_text().splitlines())}
+
+    def test_check_builds_only_open_but_statically_checks_all(self):
+        for event in ("pull_request", "push", "schedule", "workflow_dispatch"):
+            selected = self.selection("check.yml", "Select the recipes and scripts", event)
+            self.assertEqual(selected["recipes"], [BETA] if event in ("pull_request", "push") else EVERY)
+        self.assertEqual(workflow_run("check.yml", "Check every recipe").strip(),
+                         'python3 -I lib/recipes.py check --cli "$RUNNER_TEMP/upcli/upcli"')
+        workflow = (SCRIPT.parent.parent / ".github/workflows/check.yml").read_text()
+        self.assertIn("SELECTION: ${{ needs.tests.outputs.recipes }}", workflow)
+        for name in ("Build the selected recipes against their locks", "Build them again from the inputs alone"):
+            self.assertIn(f"- name: {name}\n        if: env.SELECTION != '[]'", workflow)
+
+    def test_experimental_selects_only_open_on_push_and_manual_run(self):
+        for event in ("push", "workflow_dispatch"):
+            selected = self.selection("experimental.yml", "Select the recipes", event)
+            self.assertEqual(selected["selection"], [BETA] if event == "push" else EVERY)
+
+    def test_a_private_only_push_has_no_build_selection(self):
+        # Change only the private recipe, leaving the copied real libraries
+        # uncommitted: the selection reads git's trees, not these files.
+        before = self.repo.git("rev-parse", "HEAD")
+        self.repo.first = before
+        self.repo.write(self.private, (self.repo.root / self.private).read_text() + "# edit\n")
+        self.repo.git("add", self.private)
+        self.repo.git("commit", "-q", "-m", "private metadata")
+        for workflow, step, key in (("check.yml", "Select the recipes and scripts", "recipes"),
+                                    ("experimental.yml", "Select the recipes", "selection")):
+            self.assertEqual(self.selection(workflow, step, "push")[key], [])
+
+
 class Changed(unittest.TestCase):
     def setUp(self):
         self._directory = tempfile.TemporaryDirectory()
         self.addCleanup(self._directory.cleanup)
         self.repo = Repository(self._directory.name)
+
+    def test_private_recipes_are_static_only_in_both_selections(self):
+        private = "recipes/private/media/demo/demo.media.toml"
+        folder = private.rpartition("/")[0]
+        text = media("demo", "1.0", work="demo", bundle="notes.txt").replace(
+            "unemu/media/", "private/media/").replace('\n[license]\nexpression = "GPL-2.0-or-later"\n', "")
+        self.repo.write(private, text)
+        self.repo.write(folder + "/notes.txt", "Our note\n")
+        self.repo.write(folder + "/demo.work.toml", 'recipe = "0.1"\n[work]\nid = "demo"\n')
+        # A script in the private tree must never become a prepared input.
+        self.repo.write(folder + "/source/build.sh", "exit 99\n")
+        self.repo.commit("private description")
+        self.assertEqual(self.repo.selected(self.repo.first), [private])
+        self.assertEqual(self.repo.selected(self.repo.first, "HEAD", "--open-only"), [])
+        for path in (private, folder + "/notes.txt", folder + "/demo.work.toml", private + ".lock/sha256/a"):
+            with self.subTest(path=path):
+                before = self.repo.git("rev-parse", "HEAD")
+                self.repo.change(path)
+                self.assertEqual(self.repo.selected(before), [private])
+                self.assertEqual(self.repo.selected(before, "HEAD", "--open-only"), [])
+                self.assertEqual(self.repo.selected(before, "HEAD", "--sources"), [])
+        self.repo.change(BETA)
+        self.assertEqual(self.repo.selected(self.repo.first), [BETA, private])
+        self.assertEqual(self.repo.selected(self.repo.first, "HEAD", "--open-only"), [BETA])
+        self.repo.change("lib/source.sh")
+        for options in (("--all",), (ZERO, "HEAD"), ("unknown-base", "HEAD"), ("HEAD~1", "HEAD")):
+            code, stdout, _ = self.repo.run("--json", *options)
+            self.assertEqual((code, json.loads(stdout)), (0, [*EVERY, private]))
+            code, stdout, _ = self.repo.run("--json", "--open-only", *options)
+            self.assertEqual((code, json.loads(stdout)), (0, EVERY))
+            code, stdout, _ = self.repo.run("--json", "--sources", *options)
+            self.assertEqual((code, json.loads(stdout)), (0, [SCRIPT_PATH]))
+
+    def test_invalid_recipes_never_enter_the_build_selection(self):
+        for text in ("not toml [", media("demo", "1.0").replace("unemu/media/", "private/media/"),
+                     media("demo", "1.0").replace("unemu/media/", "private/media/").replace(
+                         '\n[license]\nexpression = "GPL-2.0-or-later"\n', "") +
+                     '\n[input.game]\nname = "game.img"\nurls = ["https://example.invalid/game"]\n'):
+            before = self.repo.git("rev-parse", "HEAD")
+            path = "recipes/private/media/demo/demo.media.toml"
+            self.repo.write(path, text)
+            self.repo.commit("invalid description")
+            self.assertEqual(self.repo.selected(before), [path])
+            code, stdout, stderr = self.repo.run("--open-only", before, "HEAD")
+            self.assertEqual((code, stdout), (1, ""))
+            self.assertIn("cannot select recipes for builds", stderr)
 
     def test_a_recipe_change_selects_that_recipe(self):
         self.repo.change(BETA)
@@ -309,6 +431,7 @@ class Changed(unittest.TestCase):
 
     def test_usage_errors(self):
         for args in ((), ("HEAD",), ("a", "b", "c"), ("--all", "a", "b"), ("--bogus",),
+                     ("--sources", "--open-only", "--all"),
                      ("-HEAD", "HEAD"), ("HEAD", ""), ("--", "--output=x", "HEAD")):
             code, stdout, _ = self.repo.run(*args)
             self.assertEqual((code, stdout), (2, ""), args)

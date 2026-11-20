@@ -19,14 +19,38 @@ our recipes (upstream bytes, licences, sources) are in
 | `recipes/media/<work>/licenses.txt` | a bundled input: the licence index, our own text |
 | `recipes/media/<work>/source/` | a script that makes a prepared input (FreeDOS only) |
 | `recipes/firmware/<catalogue id>.firmware.toml` | one firmware package, `unemu/firmware/ibm-pc/<catalogue id>:rN` |
+| `recipes/private/media/<work>/<work>-<release>.media.toml` | a private media description, `private/media/ibm-pc/<work>:<release>-rN`, with its work file and our own bundled texts beside it |
+| `recipes/private/firmware/<catalogue id>.firmware.toml` | a private firmware description, `private/firmware/ibm-pc/<catalogue id>:rN` |
 | `<recipe file>.lock/sha256/<hex>` | the lock `upcli recipe pin` wrote beside the recipe |
 
 A folder holds one work, because the work is the repository: a work file
 lies beside the recipes that name it, and the last component of a
 recipe's `name` must equal its work's id. A recipe file builds one
-artifact under one tag. `lib/recipes.py` refuses a recipe outside
-`unemu/media/` or `unemu/firmware/`, and two recipes that name one tag or
-one alias.
+artifact under one tag. `lib/recipes.py` accepts open outputs under
+`unemu/media/` or `unemu/firmware/`, and private outputs under
+`private/media/` or `private/firmware/`; it refuses two recipes that name
+one tag or one alias. The separate `recipes/private/` tree keeps private
+descriptions apart from open recipes and their prepared-input scripts.
+
+Private recipes have no `[license]` and no `urls` key on any input (even an
+empty list is refused); open recipes must have `[license]`. No title file
+belongs in the repository or lock. `bundle = true` is only for our own
+text: a regular file directly beside the recipe, not a link or a file set,
+at most 1 MiB, UTF-8 without NUL. The static check enforces the size, path
+and text limits; review must establish authorship. Users supply all title
+files from their own libraries and pin with `upcli recipe pin FILE
+--library DIR`; no download of the title is permitted here.
+
+`python3 -I lib/recipes.py check --cli out/upcli/upcli` checks open and
+private recipes alike: the pinned CLI, every recipe and work file's `ok`
+line, no findings or drift, and a digest and valid lock for each recipe.
+It builds and fetches no input. `check.yml` runs that check on every recipe,
+but builds and conforms only the open selection. `lib/changed.py --json`
+includes changed private descriptions, locks, bundled texts and work files
+for static checking; `--json --open-only` supplies the build selection.
+Experimental and publication runs never build, fetch or publish private outputs;
+`lib/publish.py` skips them by default and refuses an explicit selection
+that includes any (including a mixed folder).
 
 The tag is never written: it is `<release>-r<revision>` from `[media]`
 (`r<revision>` for a package, which has no release). A release is parts
@@ -152,8 +176,8 @@ nix develop --command bash recipes/media/freedos/source/build.sh
 `lib/plan.py` surveys every `*.media.toml` and `*.firmware.toml` under
 `recipes/`, or the files and folders given, by running the supplied
 upcli's `recipe plan FILE --json` once per recipe. It accepts private
-recipes outside this repository too; the publication restrictions of
-`lib/recipes.py` do not apply. Python 3.11 or later is required.
+recipes in `recipes/private/` and outside this repository too; it does not
+apply `lib/recipes.py`'s repository policy. Python 3.11 or later is required.
 
 ```sh
 python3 -I lib/plan.py --cli out/upcli/upcli --library /path/to/files
@@ -237,6 +261,9 @@ package:
   Names and tags).
 
 ## Adding a recipe
+
+For a non-open title use `recipes/private/` and the static-only procedure
+above; the build and publication steps below are for open recipes.
 
 1. Write the recipe in `recipes/media/<work>/` (with its work file) or
    `recipes/firmware/`. `upcli recipe scaffold FILE...` prints the input

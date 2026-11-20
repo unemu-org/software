@@ -6,6 +6,13 @@ against its recipe's lock and digest, and pushes them to the registry only
 when asked. Without `--push` it is a dry run: it needs no credentials and
 writes to no registry, and it reads one only when `--skip-published` asks.
 
+Private recipes in `recipes/private/` describe user-supplied titles only.
+Their outputs under `private/media/` or `private/firmware/` are never built,
+fetched, conformed or published by this pipeline, including experimental
+runs. The default selection skips them; any explicit file, ref or folder
+selection containing one is refused before upcli or a registry is called.
+Only `lib/recipes.py check` checks them statically, alongside open recipes.
+
 ## The pinned upcli
 
 ### upcli.toml
@@ -83,7 +90,7 @@ a push. There is no option to skip it. Nothing else in the output is read.
    member out of the checked archive, without running it, and measure that
    too. Never copy a hash from the release's `SHA256SUMS`.
 3. Update `upcli.toml`, fetch the binary, and run `lib/recipes.py check`,
-   `upcli recipe conformance recipes --library DIR` and the dry run. A
+   conformance over the open recipe folders with `--library DIR`, and the dry run. A
    later release builds every recipe from its lock, so every digest must
    stay as pinned; a release that cannot build one of them is not taken.
 
@@ -159,7 +166,7 @@ python3 -I lib/publish.py --cli UPCLI [--store DIR] [--fetch] [--library DIR]...
 | `--skip-published` | read each pinned set's and package's own tag (and a set's alias) first; skip what the registry already serves (see below) |
 | `--push` | push every checked set and package |
 | `--report FILE` | also write the summary's rows as JSON (the CI reads whether anything is left to push) |
-| `RECIPE`, `FOLDER` or `REF` | select a recipe file (`recipes/media/freedos/freedos-1.4.media.toml`), every recipe below a folder (`recipes/media/freedos`) or one set or package by its ref (`unemu/media/ibm-pc/freedos:1.4-r1`, `unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1`; not an alias); default: everything |
+| `RECIPE`, `FOLDER` or `REF` | select an open recipe file (`recipes/media/freedos/freedos-1.4.media.toml`), recipes below a folder (`recipes/media/freedos`) or one set or package by its ref (`unemu/media/ibm-pc/freedos:1.4-r1`, `unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1`; not an alias); default: every open recipe; an explicit selection including a private recipe is refused |
 
 The registry host is `UNEMU_REGISTRY_HOST`, checked as upcli checks one (a
 name with a dot or a port, or `localhost`; no scheme or path). A dry run
@@ -170,11 +177,12 @@ anonymous reads of `--skip-published`.
 
 A set or package that fails a step is not taken further.
 
-1. Every recipe file is read (`lib/recipes.py`): its identity table names
+1. Every recipe file is read (`lib/recipes.py`); private recipes are
+   excluded from subsequent steps. An open recipe's identity table names
    a repository under `unemu/media/` or `unemu/firmware/` and a tag of
    decision-38, and no ref, nor a set's release alias, appears twice. A
    refusal stops the run.
-2. The version check (above), then `upcli recipe check` over every recipe:
+2. The version check (above), then `upcli recipe check` over every open recipe:
    a finding, or a recipe without its own `ok` line, stops the run. Drift
    (a work file that differs from a lock)
    is reported; a build writes the lock's record all the same, and CI
@@ -363,8 +371,15 @@ set or package](#replacing-a-published-set-or-package).
 - a `BASE` of all zeros (a new branch) or one that is not a commit in the
   clone (a force push) selects every recipe.
 
+This default selection includes private recipes for static checking.
+`--open-only` restricts it to parsed open recipes, keeping the same JSON
+list format; check.yml and experimental.yml use that list for every build,
+fetch, conformance and publication step. An invalid recipe stays in the
+static selection and refuses `--open-only`, so an invalid open recipe
+cannot be silently skipped.
+
 `--sources` prints instead the scripts that make prepared inputs
-(`recipes/**/source/build.sh`) that the change touches: a change in the
+(`recipes/**/source/build.sh`, excluding `recipes/private/`) that the change touches: a change in the
 script's folder, to a plain file of the work folder above it (the licence
 index the archive carries), or to `lib/source.sh`, `flake.nix`,
 `flake.lock` or `.github/workflows/`. It reads the two commits with git
@@ -379,12 +394,12 @@ has a concurrency group of its own commit.
 
 1. **tests and selection**, in the devShell: the README's check command,
    then the selection: `BASE` is the pull request's base, or the commit
-   before the push; the weekly and manual runs take every recipe and
+   before the push; the weekly and manual runs take every open recipe and
    script.
 2. **recipes**, on the runner's own Python: `lib/upcli.py fetch`;
-   `lib/recipes.py check`, over every recipe, which fails on a finding, on
+   `lib/recipes.py check`, over every recipe including private ones, which fails on a finding, on
    drift, on a draft and when upcli prints no `ok` line for a recipe or a
-   work file a recipe names; then for the selected recipes the dry run with
+   work file a recipe names; then for the selected open recipes the dry run with
    `--fetch` into a fresh store (each built against its lock, shown,
    guard-checked and compared with its pin; the table goes to the job
    summary), and `upcli recipe conformance` over them in a second scratch
@@ -410,7 +425,7 @@ archive it makes.
 
 ### experimental.yml: every push to main
 
-On a push to `main` (and by hand, over every recipe), one run at a time: a
+On a push to `main` (and by hand, over every open recipe), one run at a time: a
 run waits for the one before it. No Nix. Two jobs:
 
 1. **build**, without an environment or a secret: the selection of the
@@ -441,7 +456,8 @@ run waits for the one before it. No Nix. Two jobs:
 
 By hand only (`workflow_dispatch`), from `main`. Its input `select` takes
 recipe files, folders and refs separated by spaces; empty means every
-recipe; a newline, carriage return or tab in it is refused. One run at a
+open recipe, and a selection containing a private recipe is refused;
+a newline, carriage return or tab in it is refused. One run at a
 time, in a concurrency group of its own. Two jobs, as above:
 
 1. **build**, without an environment or a secret: `lib/publish.py
@@ -456,7 +472,7 @@ time, in a concurrency group of its own. Two jobs, as above:
    pins and pushes it, `--skip-published --no-build --store handover/store
    --push`. It reads `select` from the run's input itself, with the same
    refusal, never from the build job's outputs (an empty selection would
-   mean every recipe).
+   mean every open recipe).
 
 The maintainer approves the push job within 7 days, while the artifact is
 kept; after that the push job fails for want of it, and the remedy is to
@@ -478,10 +494,11 @@ only the newest waiting run of a concurrency group and cancels an older
 waiting one (in the `experimental` group), a commit message with `[skip
 ci]` starts no run, and a failed run stays failed until someone runs it
 again. The remedy is to re-run the failed or cancelled run, or to start a
-workflow by hand: check.yml and experimental.yml by hand take every recipe,
+workflow by hand: check.yml statically checks every recipe and builds every
+open recipe; experimental.yml by hand takes every open recipe,
 and the experimental run still builds and pushes only what is not published.
 Nothing is ever published to `unemu/media/` or `unemu/firmware/` without
-publish.yml, which takes every recipe by default.
+publish.yml, which takes every open recipe by default.
 
 ### Credentials
 

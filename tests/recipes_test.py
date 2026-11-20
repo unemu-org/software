@@ -74,7 +74,14 @@ FIRMWARE = """recipe = "0.1"
 name = "unemu/firmware/ibm-pc/demo-bios"
 platform = "ibm-pc"
 revision = 1
+
+[license]
+expression = "GPL-2.0-or-later"
 """
+
+PRIVATE = MEDIA.replace("unemu/media/", "private/media/").replace(
+    '[license]\nexpression = "GPL-2.0-or-later"\n\n', "")
+PRIVATE_PATH = "recipes/private/media/demo/demo-1.0-720k.media.toml"
 
 # A fake upcli for `check`: its --version names PIN, and `recipe check`
 # prints what the test's configuration says.
@@ -123,7 +130,14 @@ class Parse(unittest.TestCase):
                          ("recipes/media/demo", "recipes/media/demo/demo-1.0-720k.media.toml.lock/"))
         package = recipes.parse("recipes/firmware/demo-bios.firmware.toml", FIRMWARE.encode())
         self.assertEqual((package.tag, package.alias, package.ref, package.digest, package.license, package.work),
-                         ("r1", None, "unemu/firmware/ibm-pc/demo-bios:r1", None, None, None))
+                         ("r1", None, "unemu/firmware/ibm-pc/demo-bios:r1", None, "GPL-2.0-or-later", None))
+        self.assertFalse(recipe.private)
+        private = recipes.parse(PRIVATE_PATH, PRIVATE.encode())
+        self.assertTrue(private.private)
+        self.assertIsNone(private.license)
+        private_firmware = FIRMWARE.replace("unemu/firmware/", "private/firmware/").replace(
+            '\n[license]\nexpression = "GPL-2.0-or-later"\n', "")
+        self.assertTrue(recipes.parse("recipes/private/firmware/demo.firmware.toml", private_firmware.encode()).private)
 
     def test_refusals(self):
         for path, text, fragment in (
@@ -135,7 +149,7 @@ class Parse(unittest.TestCase):
             ("recipes/x.media.toml", MEDIA.replace("unemu/media/ibm-pc/demo", "unemu/firmware/ibm-pc/demo").encode(),
              "not under unemu/media/"),
             ("recipes/x.media.toml", MEDIA.replace("unemu/media/ibm-pc/demo", "private/media/ibm-pc/demo").encode(),
-             "not under unemu/media/"),
+             "a private recipe must have no [license]"),
             ("recipes/x.media.toml", MEDIA.replace("unemu/media/ibm-pc/demo", "unemu/media/ibm-pc/Demo").encode(),
              "not a repository name"),
             ("recipes/x.media.toml", MEDIA.replace('release = "1.0-720k"', 'release = "1.0-r1"').encode(),
@@ -154,6 +168,26 @@ class Parse(unittest.TestCase):
                 with self.assertRaises(recipes.Refusal) as caught:
                     recipes.parse(path, text)
                 self.assertIn(fragment, str(caught.exception))
+
+    def test_private_policy_refusals(self):
+        for text, fragment in (
+            (PRIVATE + '\n[license]\n', "must have no [license]"),
+            (PRIVATE.replace('[input.archive]', '[input.archive]\nurls = ["https://example.invalid/demo"]'),
+             "must have no urls"),
+            (PRIVATE.replace('[input.licenses]', '[input.licenses]\nurls = []'), "must have no urls"),
+            (PRIVATE.replace('name = "licenses.txt"', 'name = "../licenses.txt"'), "beside the recipe"),
+            (PRIVATE.replace('name = "licenses.txt"', 'name = "/licenses.txt"'), "beside the recipe"),
+            (PRIVATE.replace('name = "licenses.txt"', 'name = "sub/notes.txt"'), "beside the recipe"),
+            (PRIVATE.replace('name = "licenses.txt"', 'name = ".."'), "beside the recipe"),
+            (PRIVATE.replace('name = "licenses.txt"', 'name = 1'), "beside the recipe"),
+            (PRIVATE.replace("size = 1", f"size = {recipes.MAX_BUNDLED_TEXT + 1}"), "text file of at most"),
+            (PRIVATE.replace("size = 1", "size = true"), "text file of at most"),
+            (PRIVATE.replace("bundle = true", "bundle = true\nfiles = []"), "text file of at most"),
+            (MEDIA.replace('[license]\nexpression = "GPL-2.0-or-later"\n\n', ""), "must have [license]"),
+        ):
+            with self.subTest(fragment=fragment, text=text):
+                with self.assertRaisesRegex(recipes.Refusal, re.escape(fragment)):
+                    recipes.parse(PRIVATE_PATH, text.encode())
 
     def test_parse_revision(self):
         for tag, expected in (("1.4-r1", ("1.4", 1)), ("1.4-720k-r12", ("1.4-720k", 12)), ("r3", (None, 3)),
@@ -175,6 +209,55 @@ class Tree(unittest.TestCase):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
         (self.root / "upcli.toml").write_text(PIN_TOML, encoding="ascii")
+
+    def private_recipe(self, text=PRIVATE):
+        path = self.root / PRIVATE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        (path.parent / "licenses.txt").write_bytes(b"x")  # Our synthetic text.
+        (path.parent / "demo.work.toml").write_text('recipe = "0.1"\n')
+        return path
+
+    def test_private_bundle_bytes(self):
+        path = self.private_recipe()
+        self.assertEqual(len(recipes.load(self.root)), 3)
+        bundle = path.parent / "licenses.txt"
+        for data in (b"\xff", b"DOS\0binary", b"x" * (recipes.MAX_BUNDLED_TEXT + 1)):
+            with self.subTest(data=data[:10]):
+                bundle.write_bytes(data)
+                with self.assertRaisesRegex(recipes.Refusal, "UTF-8 text without NUL"):
+                    recipes.load(self.root)
+        bundle.unlink()
+        bundle.symlink_to(self.root / "upcli.toml")
+        with self.assertRaisesRegex(recipes.Refusal, "regular text file beside"):
+            recipes.load(self.root)
+        bundle.unlink()
+        with self.assertRaisesRegex(recipes.Refusal, "regular text file beside"):
+            recipes.load(self.root)
+
+    def test_private_check_uses_the_same_static_rules(self):
+        path = self.private_recipe()
+        # An open recipe beside a private one, both pinned.
+        firmware = self.root / "recipes/firmware/demo-bios.firmware.toml"
+        firmware.write_text(FIRMWARE.replace("revision = 1", f'revision = 1\ndigest = "{DIGEST}"'))
+        ok = [f"{p}: ok, recipe" for p in recipes.files_of(self.root, recipes.load(self.root))]
+        code, _, stderr, calls = self.check(lines=ok)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("3 pinned recipes", stderr)
+        self.assertEqual([c[:2] for c in calls], [["--version"], ["recipe", "check"]])
+        for lines, status, fragment in (
+            (ok + ["  drift: title.synopsis: changed"], 0, "1 drift lines"),
+            ([line for line in ok if not line.startswith(str(path) + ":")], 0, "no ok line"),
+            ([line for line in ok if not line.startswith(str(path.parent / "demo.work.toml"))], 0, "no ok line"),
+            (ok + ["error: rule 8: missing or invalid lock"], 1, "exited with status 1"),
+        ):
+            code, _, stderr, _ = self.check(lines=lines, status=status)
+            self.assertEqual(code, 1, stderr)
+            self.assertIn(fragment, stderr)
+        path.write_text(PRIVATE.replace(f'digest = "{DIGEST}"\n', ""))
+        code, _, stderr, _ = self.check(lines=ok)
+        self.assertEqual(code, 1)
+        self.assertIn("drafts, which are never published: " + PRIVATE_PATH, stderr)
 
     def test_find_and_load(self):
         self.assertEqual(recipes.find(self.root), ["recipes/firmware/demo-bios.firmware.toml",
@@ -295,7 +378,7 @@ class Repository(unittest.TestCase):
                 if recipe.work:
                     self.assertTrue((ROOT / recipe.folder / f"{recipe.work}.work.toml").is_file())
                     self.assertEqual(recipe.repository.rsplit("/", 1)[1], recipe.work)
-                self.assertTrue(recipe.license, "every recipe here states its licence")
+                self.assertEqual(bool(recipe.license), not recipe.private)
 
     def test_the_archive_script_pins_what_the_freedos_recipes_take(self):
         script = (ROOT / "recipes/media/freedos/source/build.sh").read_text(encoding="utf-8")

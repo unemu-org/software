@@ -20,8 +20,8 @@ on:
         description: >-
           Recipe files, folders of recipes or refs to publish, separated by spaces
           (recipes/media/freedos, unemu/media/ibm-pc/<work>:<release>-rN, which pushes its alias
-          <release> too, unemu/firmware/ibm-pc/<id>:rN); empty: every recipe. Published ones are
-          skipped.
+          <release> too, unemu/firmware/ibm-pc/<id>:rN); empty: every open recipe. Published
+          ones are skipped; a selection including a private recipe is refused.
         type: string
         required: false
         default: ""
@@ -76,7 +76,7 @@ jobs:
           for word in ${words[@]+"${words[@]}"}; do
             printf '%s\0' "$word" >> "$RUNNER_TEMP/selection"
           done
-          echo "selected: ${words[*]-} (empty: every recipe)"
+          echo "selected: ${words[*]-} (empty: every open recipe)"
 
       - name: Fetch the pinned upcli
         run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
@@ -176,7 +176,7 @@ jobs:
           for word in ${words[@]+"${words[@]}"}; do
             printf '%s\0' "$word" >> "$RUNNER_TEMP/selection"
           done
-          echo "selected: ${words[*]-} (empty: every recipe)"
+          echo "selected: ${words[*]-} (empty: every open recipe)"
 
       # --no-build: every byte the push uploads is checked against the
       # recipe's pin and copied into a clean store of the run's own, the

@@ -124,6 +124,19 @@ class Survey(unittest.TestCase):
         self.assertEqual(len(self.calls()), 2)
         self.assertEqual(rows[1]["missing"][0]["size"], INPUT["size"])
 
+    def test_private_layout_surveys_missing_user_files_beside_open_recipes(self):
+        private = self.recipes / "private/media/demo/demo.media.toml"
+        private.parent.mkdir(parents=True)
+        self.media.rename(private)
+        item = copy.deepcopy(INPUT)
+        item["urls"] = []
+        self.responses[private.name]["plan"] = report(item)
+        rows = self.json_rows()
+        self.assertEqual([r["status"] for r in rows], ["ready", "missing"])
+        self.assertEqual(rows[1]["refs"], ["private/media/ibm-pc/demo:1.0-720k-r2"])
+        self.assertEqual(rows[1]["missing"][0]["urls"], [])
+        self.assertEqual(len(self.calls()), 2)
+
     def test_folders_ignore_work_hidden_and_locks_and_deduplicate(self):
         for name in ("games/demo.work.toml", "games/.hidden/x.media.toml",
                      "games/demo.media.toml.lock/x.media.toml", "games/.hidden.media.toml"):

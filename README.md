@@ -8,6 +8,10 @@ CLI, `upcli`: pinned upstream inputs, its licences and corresponding
 sources, and a lock that pins every byte of the OCI artifact it builds,
 which unemupc's library and machine templates pull.
 
+Private recipes under `recipes/private/` also describe commercial and other
+non-open titles for users to build from their own files: no title files or input
+URLs live here, and CI checks these recipes statically without building or publishing them.
+
 ## Principles
 
 - **Bytes as released.** Disk images and ROMs are the upstream bytes, and
@@ -31,7 +35,7 @@ The full rules are in [AGENTS.md](AGENTS.md).
 ```sh
 python3 -I lib/upcli.py fetch out/upcli                 # the pinned upcli, verified
 python3 -I lib/recipes.py check --cli out/upcli/upcli   # check every recipe
-python3 -I lib/publish.py --cli out/upcli/upcli --fetch # build all against their locks, dry run
+python3 -I lib/publish.py --cli out/upcli/upcli --fetch # build all open recipes against their locks, dry run
 ```
 
 Python 3.11 or later; `nix develop` provides it. The dry run needs no

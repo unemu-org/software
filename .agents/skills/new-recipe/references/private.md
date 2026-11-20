@@ -6,9 +6,10 @@ permission. The user builds it from their own files into their own store
 and registry. Output under `private/media/ibm-pc/<work>:<release>-rN` (or
 `private/firmware/...`). Scope: bd memory `scope` (amended 2026-11-20).
 
-Status: the CI path for these recipes (static check only, never built or
-pushed) is bead um-7jx.24. Until it is merged, do not commit a private
-recipe; drafts stay local.
+Layout: `recipes/private/media/<work>/<work>-<release>.media.toml`, with
+`<work>.work.toml`, our own bundled texts and the lock beside it; firmware
+descriptions use `recipes/private/firmware/<catalogue id>.firmware.toml`.
+This separates descriptions from the open recipes and prepared-input scripts.
 
 ## Hard limits
 
@@ -24,8 +25,10 @@ recipe; drafts stay local.
   "redump"|"tosec"|"no-intro"|"mame", set, name }]`). Files under 256
   bytes: their hash discloses their content; upcli's `disclosable` guard
   applies.
-- Only bundled text of our own (a licence-free note, never the title's
-  documents).
+- Only bundled text of our own (a note, never the title's documents): a
+  regular file directly beside the recipe, no link or file set, UTF-8
+  without NUL, at most 1 MiB. Static checks enforce these limits;
+  authorship must be reviewed.
 
 ## Writing it
 
@@ -39,6 +42,18 @@ recipe; drafts stay local.
    metadata only - no payload byte, no document text of the title.
 4. `python3 -I lib/plan.py --cli out/upcli/upcli FILE --library <files>`
    shows whether a library is complete (`ready`) or what is `missing`.
+5. `python3 -I lib/recipes.py check --cli out/upcli/upcli FILE` checks the
+   description and lock without the title's files: no licence statement,
+   no input `urls` key (even empty), valid bundled text, no draft, finding
+   or work-file drift, and an `ok` line for the recipe and its work file.
+   upcli validates the lock, including the prohibition on payload bytes.
+
+CI runs the same static check over all recipes. `lib/changed.py` includes
+private recipes for static checking; its `--open-only` selection excludes
+them from builds, fetching and conformance. `lib/publish.py` skips them by
+default and refuses any explicit selection containing one, including a
+mixed folder. Experimental and publication workflows never build or
+publish their outputs. The repository holds and checks descriptions only.
 
 ## Users
 

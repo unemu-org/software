@@ -30,6 +30,14 @@ anything in the script's own folder, or to a file of the work folder above
 it that is no recipe file, lock or work file (the licence index the
 archive carries, say), or to a shared input of the scripts: lib/source.sh,
 flake.nix, flake.lock (the toolchain they run in) and .github/workflows/.
+Scripts under recipes/private/ are never selected.
+
+The default list includes private recipes for static checking. With
+--open-only, only parsed open recipes are selected, for builds, fetching,
+conformance and publication. Unparseable recipes remain in the default
+static selection and refuse --open-only, so invalid open recipes cannot be
+silently skipped. Both lists support
+--json; check.yml checks all recipes and builds only the --open-only list.
 
 Everything is selected, as with --all, when BASE is all zeros (what GitHub
 sends for a new branch) or is not a commit here (a force push whose old head
@@ -133,7 +141,7 @@ def files_at(root, head, env):
     return split_z(git(root, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", head, "--", "recipes/"], env))
 
 
-def recipes_at(root, head, env):
+def recipes_at(root, head, env, open_only=False):
     """Every recipe at HEAD, as (path, work file or None, bundled names); a
     recipe its file cannot describe still counts, by its path alone."""
     found = []
@@ -143,9 +151,12 @@ def recipes_at(root, head, env):
         work, bundled = None, ()
         try:
             recipe = recipes.parse(path, git(root, ["cat-file", "blob", f"{head}:{path}"], env))
+            if open_only and recipe.private:
+                continue
             work, bundled = recipe.work, recipe.bundled
-        except recipes.Refusal:
-            pass
+        except recipes.Refusal as refusal:
+            if open_only:
+                raise Failure(f"cannot select recipes for builds: {refusal}; run lib/recipes.py check") from None
         found.append((path, work, bundled))
     return sorted(found)
 
@@ -153,7 +164,8 @@ def recipes_at(root, head, env):
 def sources_at(root, head, env):
     """Every prepared-input script at HEAD: recipes/**/source/build.sh."""
     return sorted(path for path in files_at(root, head, env)
-                  if path.endswith("/" + SOURCE_SCRIPT) and path.count("/") >= 3)
+                  if path.endswith("/" + SOURCE_SCRIPT) and path.count("/") >= 3
+                  and not path.startswith("recipes/private/"))
 
 
 def changed_paths(root, base, head, env):
@@ -191,7 +203,7 @@ def touches_source(path, script):
     return not (recipes.kind_of(path) or name.endswith(recipes.WORK_SUFFIX))
 
 
-def select(root, base, head, environ=None, sources=False):
+def select(root, base, head, environ=None, sources=False, open_only=False):
     """The recipes (or with SOURCES the prepared-input scripts) at HEAD that
     the change from BASE (None: every one) to HEAD touches, and a note on
     stderr's behalf (or None)."""
@@ -203,7 +215,7 @@ def select(root, base, head, environ=None, sources=False):
         every = sources_at(root, head_id, env)
         names = every
     else:
-        every = recipes_at(root, head_id, env)
+        every = recipes_at(root, head_id, env, open_only=open_only)
         names = [path for path, _, _ in every]
     if base is None:
         return names, None
@@ -227,8 +239,12 @@ def main(argv=None, root=ROOT, environ=None):
     parser.add_argument("--all", action="store_true", help="print every recipe (or script) at HEAD")
     parser.add_argument("--sources", action="store_true",
                         help="print the prepared-input scripts the change touches instead of the recipes")
+    parser.add_argument("--open-only", action="store_true",
+                        help="select only open recipes, for builds, conformance and publication")
     parser.add_argument("commits", nargs="*", metavar="BASE HEAD")
     options = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if options.sources and options.open_only:
+        parser.error("--sources and --open-only are separate selections")
     if options.all:
         if len(options.commits) > 1:
             parser.error("--all takes at most HEAD")
@@ -241,7 +257,7 @@ def main(argv=None, root=ROOT, environ=None):
         if name is not None and (not name or name.startswith("-")):
             parser.error(f"{name!r} is not a commit name")
     try:
-        selected, note = select(root, base, head, environ, sources=options.sources)
+        selected, note = select(root, base, head, environ, sources=options.sources, open_only=options.open_only)
     except Failure as failure:
         print(f"changed.py: {failure}", file=sys.stderr)
         return 1

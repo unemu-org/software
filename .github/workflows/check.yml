@@ -70,7 +70,8 @@ jobs:
             push) range=("$BEFORE" HEAD) ;;
             *) range=(--all) ;;
           esac
-          recipes="$(python3 -I lib/changed.py --json "${range[@]}")"
+          # Private recipes get the static check below, never a build or conformance.
+          recipes="$(python3 -I lib/changed.py --json --open-only "${range[@]}")"
           sources="$(python3 -I lib/changed.py --json --sources "${range[@]}")"
           echo "recipes: $recipes"
           echo "scripts: $sources"
@@ -102,7 +103,8 @@ jobs:
       - name: Fetch the pinned upcli
         run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
 
-      # Every recipe, whatever the selection: a finding, drift (a work file
+      # Every recipe, including private ones, whatever the build selection:
+      # a finding, drift (a work file
       # that differs from a lock) or a draft fails the check.
       - name: Check every recipe
         run: python3 -I lib/recipes.py check --cli "$RUNNER_TEMP/upcli/upcli"

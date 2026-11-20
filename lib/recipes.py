@@ -21,6 +21,9 @@ full check. The ref is NAME:TAG; the tag is <release>-r<revision>, or
 r<revision> without a release (unemupc's decision-38), and the release
 alone is the alias that names the newest revision. This pipeline publishes
 repositories under unemu/media/ and unemu/firmware/ only.
+Private recipes under private/media/ and private/firmware/ are checked
+statically only: no licence statement, no input URLs, only our own small
+bundled texts. Authorship of those texts is a review requirement.
 
 `check` runs `upcli recipe check` over the files and folders given
 (default: recipes/) and passes only when upcli prints an ok line for every
@@ -53,6 +56,9 @@ SUFFIXES = {".media.toml": "media", ".firmware.toml": "firmware"}
 WORK_SUFFIX = ".work.toml"
 LOCK_SUFFIX = ".lock"
 PREFIXES = {"media": "unemu/media/", "firmware": "unemu/firmware/"}
+PRIVATE_PREFIXES = {"media": "private/media/", "firmware": "private/firmware/"}
+# upcli's recipe bundle limit (§6.8); text is UTF-8 without NUL (§6.13).
+MAX_BUNDLED_TEXT = 1024 * 1024
 # OCI distribution: a repository name of lower-case components, a tag.
 COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
 REPOSITORY = re.compile(rf"{COMPONENT}(?:/{COMPONENT})*")
@@ -85,6 +91,10 @@ class Recipe:
     work: str | None
     bundled: tuple
     license: str | None
+
+    @property
+    def private(self):
+        return self.repository.startswith(PRIVATE_PREFIXES[self.kind])
 
     @property
     def tag(self):
@@ -148,7 +158,7 @@ def parse_revision(tag):
 
 def parse(path, data):
     """The Recipe of PATH, whose bytes are DATA; a Refusal when it is not a
-    recipe this pipeline publishes."""
+    recipe this repository checks."""
     kind = kind_of(path)
     if kind is None:
         raise Refusal(f"{path}: not a recipe file (recipes/**/NAME.media.toml or NAME.firmware.toml)")
@@ -165,9 +175,10 @@ def parse(path, data):
     repository = identity.get("name")
     if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
         raise Refusal(f"{path}: {kind}.name {repository!r} is not a repository name")
-    if not repository.startswith(PREFIXES[kind]) or len(repository) > MAX_REPOSITORY:
+    if not repository.startswith((PREFIXES[kind], PRIVATE_PREFIXES[kind])) or len(repository) > MAX_REPOSITORY:
         raise Refusal(f"{path}: {kind}.name {repository!r} is not under {PREFIXES[kind]}, "
-                      "where this repository publishes")
+                      f"where this repository publishes, or {PRIVATE_PREFIXES[kind]} (static check only)")
+    private = repository.startswith(PRIVATE_PREFIXES[kind])
     release = identity.get("release")
     if release is not None and (not isinstance(release, str) or not parse_release(release)):
         raise Refusal(f"{path}: {kind}.release {release!r} is not a release (decision-38)")
@@ -177,12 +188,30 @@ def parse(path, data):
     digest = identity.get("digest")
     if digest is not None and (not isinstance(digest, str) or not DIGEST.fullmatch(digest)):
         raise Refusal(f"{path}: {kind}.digest {digest!r} is not sha256:<64 hex digits>")
+    if private and "license" in document:
+        raise Refusal(f"{path}: a private recipe must have no [license]")
+    if not private and "license" not in document:
+        raise Refusal(f"{path}: an unemu/ recipe must have [license]")
     work = document.get("work")
     if work is not None and not isinstance(work, str):
         raise Refusal(f"{path}: work is not a string")
     inputs = document.get("input", {})
     if not isinstance(inputs, dict):
         raise Refusal(f"{path}: input is not a table of inputs")
+    if private:
+        for key, value in inputs.items():
+            if not isinstance(value, dict):
+                raise Refusal(f"{path}: input.{key} is not a table")
+            if "urls" in value:
+                raise Refusal(f"{path}: private input.{key} must have no urls (use your own library)")
+            if value.get("bundle") is True:
+                name, size = value.get("name"), value.get("size")
+                if (not isinstance(name, str) or not name or name in (".", "..")
+                        or "/" in name or "\\" in name):
+                    raise Refusal(f"{path}: bundled input.{key} must be a text file beside the recipe")
+                if "files" in value or type(size) is not int or not 0 <= size <= MAX_BUNDLED_TEXT:
+                    raise Refusal(f"{path}: bundled input.{key} must be a text file of at most "
+                                  f"{MAX_BUNDLED_TEXT} bytes")
     bundled = tuple(sorted(
         value["name"] for value in inputs.values()
         if isinstance(value, dict) and value.get("bundle") is True and isinstance(value.get("name"), str)
@@ -194,6 +223,31 @@ def parse(path, data):
     if not TAG.fullmatch(recipe.tag):
         raise Refusal(f"{path}: the tag {recipe.tag!r} is longer than 128 characters")
     return recipe
+
+
+def check_private_bundle(root, recipe):
+    """Check bundled bytes; authorship still needs human review.
+
+    upcli checks their declared size and hash, and the lock, statically.
+    Never read any user-supplied input from a library here.
+    """
+    if not recipe.private:
+        return
+    for name in recipe.bundled:
+        path = pathlib.Path(root) / recipe.folder / name
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise Refusal(f"{recipe.path}: bundled input {name!r} must be a regular text file beside the recipe")
+            with path.open("rb") as handle:
+                data = handle.read(MAX_BUNDLED_TEXT + 1)
+            if len(data) > MAX_BUNDLED_TEXT or b"\0" in data:
+                raise ValueError
+            data.decode("utf-8")
+        except ValueError:
+            raise Refusal(f"{recipe.path}: bundled input {name!r} must be UTF-8 text without NUL, "
+                          f"at most {MAX_BUNDLED_TEXT} bytes (our own text only)") from None
+        except OSError as error:
+            raise Refusal(f"{recipe.path}: cannot read bundled input {name!r}: {error.strerror or error}") from None
 
 
 def find(root):
@@ -214,7 +268,9 @@ def load(root):
     that is no recipe this pipeline takes, or for two that name one tag."""
     recipes = []
     for path in find(root):
-        recipes.append(parse(path, (pathlib.Path(root) / path).read_bytes()))
+        recipe = parse(path, (pathlib.Path(root) / path).read_bytes())
+        check_private_bundle(root, recipe)
+        recipes.append(recipe)
     unique(recipes)
     return recipes
 
