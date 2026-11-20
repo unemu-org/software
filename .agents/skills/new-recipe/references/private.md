@@ -14,7 +14,14 @@ This separates descriptions from the open recipes and prepared-input scripts.
 ## Hard limits
 
 - **No bytes** of the title in the repository, the bead, the PR or the
-  lock: no files, no extracted text, no manuals, no screenshots.
+  lock: no files, no extracted text, no manuals, no screenshots. This
+  includes metadata: take no text or descriptive facts from the title's
+  own files. Requirements and descriptive facts come only from public
+  sources (publisher page, Wikidata, MobyGames), cited with URL and
+  retrieval date, or are left out. Do not decode or quote a title's files
+  to fill metadata. Disk order and labels may use scaffold's volume
+  labels and member names, without quoting or describing file contents;
+  when scaffold does not provide them, use neutral labels or omit them.
 - **No URLs** in any input, and no link to any download of the title
   anywhere in the repository (AGENTS.md, "Only authorised sources").
   Information pages (Wikidata, MobyGames, the publisher's page) may be
@@ -32,21 +39,53 @@ This separates descriptions from the open recipes and prepared-input scripts.
 
 ## Writing it
 
-1. Start from unemupc's examples (`crates/pc-image/data/recipes/` and the
-   corpus in its `backlog/docs/design/recipe-corpus/`: `windows-3.0`,
-   `azuramon`).
-2. The maintainer (or the user) runs `upcli recipe scaffold` on their own
-   copies to get sizes, hashes and member lists, and `upcli recipe pin
-   FILE --library <their files>` to pin it. We never download the title.
-3. Check what the lock holds before committing: manifest, config and
-   metadata only - no payload byte, no document text of the title.
-4. `python3 -I lib/plan.py --cli out/upcli/upcli FILE --library <files>`
-   shows whether a library is complete (`ready`) or what is `missing`.
-5. `python3 -I lib/recipes.py check --cli out/upcli/upcli FILE` checks the
+1. Consult unemupc's private corpus in
+   `backlog/docs/design/recipe-corpus/`: `windows-3.0`, `azuramon`.
+   `crates/pc-image/data/recipes/` holds open examples only; never copy
+   their `[license]` into a private recipe.
+2. **Scaffold first, always**: the maintainer runs
+   `upcli recipe scaffold FILE|FOLDER...` on their own copies, or a worker
+   does so with read-only access to the maintainer's library. Start from
+   its `[input]` tables and member lists; renaming ids is fine. Hand-measured
+   inputs or a hand-rolled reader of a title's files are a review failure.
+   We never download the title or copy it into the worktree. TOSEC-style
+   names are hints, not verified provenance or dump database ids: version,
+   edition and `(Disk N)` order may follow an explicitly stated name hint,
+   with public sources cited where available. Scaffold treats raw images
+   as plain files; it does not supply their volume labels or file contents.
+3. Remove any old digest and lock, then pin with
+   `upcli recipe pin FILE --library "$LIBRARY" --store "$S1"`. Pin a copy
+   of the same draft (with its work file and our own bundled texts) again
+   with a fresh store `$S2`; recipe and lock must be byte-identical.
+   In upcli 0.0.3 `recipe build` has no `--create`: create each store first
+   with `upcli library scan "$EMPTY" --store "$S1"` (repeat for `$S2`),
+   where `$EMPTY` is an empty scratch folder. Run with a fresh `HOME`,
+   `LC_ALL=C`, `TZ=UTC`. Always pass `--store` on store-using commands:
+   `recipe plan` without it writes its library index in the user's default
+   store. Both gaps are filed as `upc-5pw.113.15` in unemupc.
+4. Decode and check what the lock holds before committing: manifest,
+   config and metadata only - no payload byte, no document text of the title.
+5. `python3 -I lib/plan.py --cli out/upcli/upcli FILE --library "$LIBRARY" --store "$S3"`
+   shows whether a library is complete (`ready`). Repeat without the
+   library in another fresh store: the title's inputs must be `missing`.
+6. `python3 -I lib/recipes.py check --cli out/upcli/upcli FILE` checks the
    description and lock without the title's files: no licence statement,
    no input `urls` key (even empty), valid bundled text, no draft, finding
    or work-file drift, and an `ok` line for the recipe and its work file.
    upcli validates the lock, including the prohibition on payload bytes.
+7. `upcli recipe push FILE unemu/recipes/media/<platform>/<work>:<tag> --dry-run --store "$S3"`
+   must report `guard:allowed` and sends nothing. Firmware uses
+   `unemu/recipes/firmware/<platform>/<catalogue id>:<tag>`. The recipe
+   guard allows only the text bundle (recipe, work file, our own bundled
+   texts, lock); about texts need sources, and every file input, file-set
+   entry and archive member under 256 bytes needs `disclosable = true`.
+   `check` and `scaffold` do not accept `--store`; create every fresh store
+   used above with `library scan` first.
+
+No recipe is pushed to any registry before unemupc's recipe format 1.0
+freeze (`upc-5pw.113.17`). After it, recipes for private outputs are public
+text under `unemu/recipes/...`; outputs under `private/` never leave the
+user's own registries. A successful dry run does not authorise a push.
 
 CI runs the same static check over all recipes. `lib/changed.py` includes
 private recipes for static checking; its `--open-only` selection excludes
@@ -58,5 +97,6 @@ publish their outputs. The repository holds and checks descriptions only.
 ## Users
 
 Users build with `upcli recipe build FILE --library <their files> --store
-DIR` and push to their own registry: `upcli image push <ref>
-private/media/ibm-pc/<work>:<tag> --registry HOST --store DIR`.
+DIR` after creating a fresh store as above, and push to their own registry.
+The usage is `upcli image push NAME:TAG [REFERENCE] --store DIR [--registry HOST]`:
+`upcli image push private/media/ibm-pc/<work>:<tag> <their-registry-ref> --registry HOST --store DIR`.

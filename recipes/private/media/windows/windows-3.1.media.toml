@@ -1,21 +1,19 @@
 # Private description only: six user-supplied disks, used byte for byte.
-# MEASURED: each input's size and SHA-256; FAT12 geometry is 1.44M.
-# READ: disk 1 SETUP.INF [disks] lists disks 1 through 6 in that order;
-# all six DISKn marker files and root volume labels WIN31DISK1 through
-# WIN31DISK6 are present. Its file references resolve on the named disks
-# (including compressed names; the extensionless WINVER is WINVER._).
-# READ: SETUP.INF [dialog] names Windows 3.1. Wikidata's version item is
-# https://www.wikidata.org/wiki/Q495432 (retrieved 2026-11-20).
-# READ: requirements quotes disk 1 WIN.CNF's DOS diagnostic verbatim,
-# decoded in memory from WIN.CN_. README.WRI (disk 3 README.WR_) and
-# disk 1 SETUP.TXT provide troubleshooting, not baseline hardware needs;
-# no hardware requirements are inferred from their conditional advice.
-# The release uses the software's version alone (decision-38). IBM in the
-# supplied names is not verified OEM provenance, so no edition token or
-# edition metadata is asserted. 1.44M is the supplied release's own
-# format, with no format suffix. Publisher and release year are omitted.
-# Input names are TOSEC-style hints, never identities. No TOSEC ids are
-# asserted: the catalogue set name has not been established.
+# MEASURED: upcli 0.0.3 recipe scaffold supplied the input names, sizes
+# and SHA-256s below; ids alone were renamed. 1474560 bytes maps to 1.44M.
+# READ: Windows 3.1: https://www.wikidata.org/wiki/Q495432
+# (retrieved 2026-11-20), consistent with the TOSEC-style version hint.
+# Disk order follows the TOSEC-style (Disk N) name hints, not file contents.
+# Scaffold treats raw images as plain inputs and supplies no volume labels;
+# the medium labels are our neutral Disk N of 6 labels.
+# IBM in the supplied names is not verified OEM provenance: no edition is
+# asserted. The release is the version alone (decision-38); 1.44M is this
+# supplied release's own format, with no format suffix. This is a correction
+# of an unpublished description; revision remains 1.
+# No TOSEC ids are asserted: the catalogue set name is not established.
+# Requirements, needs, release year and publisher are omitted: no public
+# source for this particular release is asserted. No text is taken from
+# the title's files.
 
 recipe = "0.1"
 work = "windows"
@@ -25,13 +23,12 @@ name = "private/media/ibm-pc/windows"
 platform = "ibm-pc"
 release = "3.1"
 revision = 1
-digest = "sha256:c5170839c40050dcef4043b7a12dde05760983e9e73d04e43b7dce24d403da23"
+digest = "sha256:91100d1211d2b59ae45701b47abdd33c39c33ffb51b0247d0b8cd2760cd370df"
 
 [title]
 version = "3.1"
 source_media = "6 x 1.44M floppy disk images"
-description = "Windows 3.1 on six unmodified 1.44M disk images, in SETUP.INF disk order."
-requirements = "Must have MS-DOS version 3.10 or greater"
+description = "Windows 3.1 on six unmodified 1.44M disk images."
 
 [input.disk1]
 name = "IBM - Windows v3.1 (Disk 1)(Microsoft Corporation)(1993).vfd"
@@ -62,45 +59,44 @@ sha256 = "724546f840f317d74c85ba65aa4c5f09a630c34020d2094b74dd22e6b0e1758a"
 name = "IBM - Windows v3.1 (Disk 6)(Microsoft Corporation)(1993).vfd"
 size = 1474560
 sha256 = "55810cd2ec9fa3679f75390c05b4589e2aeb2bff797e6695ecd312dc85f7b23f"
-
 [[medium]]
 id = "disk-1"
-label = "WIN31DISK1"
+label = "Disk 1 of 6"
 format = "1.44M"
 file_name = "disk1.vfd"
 from = "disk1"
 
 [[medium]]
 id = "disk-2"
-label = "WIN31DISK2"
+label = "Disk 2 of 6"
 format = "1.44M"
 file_name = "disk2.vfd"
 from = "disk2"
 
 [[medium]]
 id = "disk-3"
-label = "WIN31DISK3"
+label = "Disk 3 of 6"
 format = "1.44M"
 file_name = "disk3.vfd"
 from = "disk3"
 
 [[medium]]
 id = "disk-4"
-label = "WIN31DISK4"
+label = "Disk 4 of 6"
 format = "1.44M"
 file_name = "disk4.vfd"
 from = "disk4"
 
 [[medium]]
 id = "disk-5"
-label = "WIN31DISK5"
+label = "Disk 5 of 6"
 format = "1.44M"
 file_name = "disk5.vfd"
 from = "disk5"
 
 [[medium]]
 id = "disk-6"
-label = "WIN31DISK6"
+label = "Disk 6 of 6"
 format = "1.44M"
 file_name = "disk6.vfd"
 from = "disk6"

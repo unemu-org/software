@@ -1,0 +1,57 @@
+# Private description only: two user-supplied disks, used byte for byte.
+# MEASURED: upcli 0.0.3 recipe scaffold supplied the input names, sizes
+# and SHA-256s below; ids alone were renamed. 368640 bytes maps to 360K.
+# READ: MS-DOS work identity: https://www.wikidata.org/wiki/Q47604
+# (retrieved 2026-11-20). It lists a version 3.30, but does not identify
+# this particular disk set or its edition.
+# ASSUMED: version 3.3 and edition Acer follow the TOSEC-style name hints,
+# not the title's files or verified OEM provenance. The release follows
+# the supplied name's 3.3 spelling: 3.3-acer (decision-38).
+# Disk order follows the TOSEC-style (Disk N) name hints, not file contents.
+# Scaffold treats raw images as plain inputs and supplies no volume labels;
+# the medium labels are our neutral Disk N of 2 labels.
+# 360K is this supplied release's own format: no format suffix. This is a
+# correction of an unpublished description; revision remains 1.
+# No TOSEC ids are asserted: the catalogue set name is not established.
+# Requirements, needs, release year and publisher are omitted: no public
+# source for this particular release is asserted. No text is taken from
+# the title's files.
+
+recipe = "0.1"
+work = "msdos"
+
+[media]
+name = "private/media/ibm-pc/msdos"
+platform = "ibm-pc"
+release = "3.3-acer"
+revision = 1
+digest = "sha256:f58e7a491fcf9a5896cee5ddd12750c146b205dc9dae28e80b0d2e134f655f14"
+
+[title]
+version = "3.3"
+edition = "Acer"
+source_media = "2 x 360K floppy disk images"
+description = "MS-DOS 3.3 on two unmodified 360K disk images."
+
+[input.disk1]
+name = "Acer - MS-DOS v3.3 (Disk 1)(53.05206.032)(Microsoft Corporation)(1987) [!].vfd"
+size = 368640
+sha256 = "168664594eabce0246236cefd7c467f645020c753ee405ad060aa36a49fbc2a2"
+
+[input.disk2]
+name = "Acer - MS-DOS v3.3 (Disk 2)(53.05206.032)(Microsoft Corporation)(1987) [!].vfd"
+size = 368640
+sha256 = "8586230362c7cc25bd86c102437eac2978758717b6d325b2978c1953de512d75"
+[[medium]]
+id = "disk-1"
+label = "Disk 1 of 2"
+format = "360K"
+file_name = "disk1.vfd"
+from = "disk1"
+
+[[medium]]
+id = "disk-2"
+label = "Disk 2 of 2"
+format = "360K"
+file_name = "disk2.vfd"
+from = "disk2"

@@ -13,10 +13,11 @@ Examples: `recipes/firmware/*.firmware.toml`. Rules: bd memory
 - The ROM and its source archive are release assets of the project that
   builds them (the unemu-org forks attach them from their own release
   workflows). We never build firmware from source in a recipe.
-- Title, description, vendor, version and labels are unemupc's words
-  (`pc_image::template::FIRMWARE` in unemupc), word for word, so both
-  repositories build one package. Changing them is coordinated with
-  unemupc.
+- Our recipe is the source of truth for title, description, vendor,
+  version and labels. unemupc's template build now builds its three
+  firmware packages from our recipes, copied into
+  `crates/pc-image/data/recipes/`; do not take metadata from
+  `pc_image::template::FIRMWARE`.
 
 ## The recipe
 
@@ -32,5 +33,7 @@ Examples: `recipes/firmware/*.firmware.toml`. Rules: bd memory
 
 ## After pinning
 
-Tell the unemupc98 session the new digest: its template build pins the
-package digests (`crates/pc-image/tests/template.rs`).
+Before publication, send the unemupc session every changed recipe and its
+new lock files and digest, including changes to metadata alone, so its
+copies in `crates/pc-image/data/recipes/` and template digest pins agree.
+The same coordination applies to the FreeDOS recipes (open-media.md).

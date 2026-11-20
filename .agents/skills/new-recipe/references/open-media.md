@@ -5,6 +5,12 @@ Examples: `recipes/media/freedos/` (disk images as released, copyleft,
 source archive), `recipes/media/kenslab/` (archive without disks, freeware
 terms).
 
+unemupc's template build builds the FreeDOS sets and its three firmware
+packages from our recipes, copied into `crates/pc-image/data/recipes/` in
+unemupc. Our recipes are the source of truth. Before publication, send the
+unemupc session any changed FreeDOS recipe, its new lock files and digest,
+even when only metadata changed, so its copies and template pins agree.
+
 ## Shapes
 
 | Upstream ships | Recipe | Example |

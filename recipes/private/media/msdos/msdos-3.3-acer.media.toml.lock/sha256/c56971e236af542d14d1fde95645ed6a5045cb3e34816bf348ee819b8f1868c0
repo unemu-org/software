@@ -4,7 +4,7 @@ extras = []
 
 [[media]]
 id = "disk-1"
-label = "308-R89135"
+label = "Disk 1 of 2"
 blob = "sha256:168664594eabce0246236cefd7c467f645020c753ee405ad060aa36a49fbc2a2"
 
 [media.format]
@@ -18,7 +18,7 @@ sectors = 9
 
 [[media]]
 id = "disk-2"
-label = "308-R89135"
+label = "Disk 2 of 2"
 blob = "sha256:8586230362c7cc25bd86c102437eac2978758717b6d325b2978c1953de512d75"
 
 [media.format]
