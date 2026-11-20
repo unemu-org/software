@@ -51,6 +51,16 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
   with an SPDX statement equal to the licence unemupc's firmware catalogue records
   for its ROM and, for copyleft firmware, its corresponding source archive attached.
   When in doubt, the set or package is not published.
+- **Only authorised sources**: an input's URL points only to a source that
+  distributes those bytes with the rights holder's permission: the author's or
+  publisher's own site or release, an official mirror, an archive the rights holder
+  approved, or a capture of one of these (archive.org). Never a site that offers the
+  software without that permission ("abandonware" sites, warez, unofficial uploads),
+  even when it also hosts legitimate titles. A recipe without an open licence (its
+  output under `private/`) names no URL at all: only sizes, SHA-256s and dump
+  database ids (Redump, TOSEC, No-Intro); the user supplies the files from their own
+  library. Information pages (Wikidata, MobyGames, the publisher's page) may be
+  cited as sources of metadata.
 - **Reproducible**: the same recipe gives the same images, archives and set digests
   on every run and host; no wall clock, no locale or user-config dependence. A recipe
   is pinned with the upcli of `upcli.toml` (`upcli recipe pin`: its `digest` and its

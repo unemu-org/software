@@ -122,6 +122,16 @@ order (HTTPS only, at most its size) and checks it before any step reads
 it; a library (`--library DIR`) is searched by size and hash first,
 whatever the files are called. Nothing downloaded is ever executed.
 
+URLs name only sources that distribute the bytes with the rights holder's
+permission: the author's or publisher's own site or release, an official
+mirror, an archive the rights holder approved, or an archive.org capture of
+one of these. A site that offers software without that permission is never
+named, even for one of its legitimate titles, because a recipe with
+`--fetch` is a tool that downloads, not only a link. A recipe without an
+open licence (output under `private/`) has no `urls` at all: its inputs are
+sizes, SHA-256s and dump database ids, and the user supplies the files from
+their own library (`--library`). See AGENTS.md, "Only authorised sources".
+
 A **prepared input** is a file a recipe takes by hash that no step can
 make. The FreeDOS source archive is one: it needs an ISO 9660 reader, git
 and a tar writer. `recipes/media/freedos/source/build.sh` (with
