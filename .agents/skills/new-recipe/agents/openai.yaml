@@ -1,0 +1,4 @@
+interface:
+  display_name: "New recipe"
+  short_description: "Add a media set, firmware package or private recipe"
+  default_prompt: "Use $new-recipe to add a recipe for this title, following its licence, source and verification steps."
