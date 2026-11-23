@@ -37,3 +37,24 @@ Before publication, send the unemupc session every changed recipe and its
 new lock files and digest, including changes to metadata alone, so its
 copies in `crates/pc-image/data/recipes/` and template digest pins agree.
 The same coordination applies to the FreeDOS recipes (open-media.md).
+
+## Recipe artifact publication
+
+Publish through the `publish` workflow with its default `mode=both`:
+outputs first, then their recipe artifacts, in one approved run. Every
+output under `unemu/firmware/**` must come from a pinned recipe of this
+repository and have its recipe artifact under
+`unemu/recipes/firmware/ibm-pc/<catalogue id>:rN` at the same revision
+tag. An output without its published recipe is incomplete. Explicit
+`mode=outputs` leaves it incomplete until the recipe follows;
+`mode=recipes` supports recipe-only updates after the output's revision
+tag serves its pinned digest. The recipe artifact names the output
+digest; lookup is by name, with no reverse link from the output because
+the recipe's lock contains that output digest. The unemu project pushes
+nothing to the family registry; publication belongs to this repository.
+The maintainer runs and approves the push job, including the first
+push of each recipe; `ci-promote` may write `unemu/recipes/**` (2026-11-23).
+The pipeline enforces the strict static check, exact guard plan and anonymous
+output gate, then anonymously pulls every pushed recipe and compares all
+files and bytes with the repository. No experimental recipe publication or
+alias is allowed. See SKILL.md §5 and `docs/publishing.md`.

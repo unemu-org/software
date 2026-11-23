@@ -62,8 +62,9 @@ but builds and conforms only the open selection. `lib/changed.py --json`
 includes changed private descriptions, locks, bundled texts and work files
 for static checking; `--json --open-only` supplies the build selection.
 Experimental and publication runs never build, fetch or publish private outputs;
-`lib/publish.py` skips them by default and refuses an explicit selection
-that includes any (including a mixed folder).
+output mode in `lib/publish.py` skips them by default and refuses an explicit
+selection that includes any (including a mixed folder). `--recipes` allows
+their public text artifacts and never builds or fetches their outputs.
 
 The tag is never written: it is `<release>-r<revision>` from `[media]`
 (`r<revision>` for a package, which has no release). A release is parts
@@ -304,7 +305,15 @@ unemu.
 unemu can publish a pinned recipe as an artifact of its own
 (`unemu recipe push`, to `unemu/recipes/<kind>/ibm-pc/<name>:<tag>`, the
 recipe file, its work file, its bundled texts and its lock, no payload).
-Recipe format 1.0 is frozen (unemupc decision-43). Publishing recipe
-artifacts still requires the maintainer's later decision and an account
-that may write `unemu/recipes/**`. This migration adds no recipe push step;
-the workflows continue to publish only open sets and packages.
+Recipe format 1.0 is frozen (unemupc decision-43). Recipes publish through
+the maintainer-approved `publish` workflow with `ci-promote`, granted write
+access to `unemu/recipes/**` on 2026-11-23. The first push of a recipe
+requires approval of that workflow run. Each open output must already serve
+the pinned digest at its revision tag before its recipe is pushed; the
+workflow's `both` mode pushes outputs first. Private recipes have the static
+check and guard instead of an output gate: their text is public under
+`unemu/recipes/`, while outputs under `private/` never leave the user's
+registries. Every pushed recipe is pulled anonymously into a fresh folder
+and compared with the repository's exact files and bytes. There are no
+experimental recipe targets or recipe aliases. See
+[publishing.md](publishing.md#recipe-artifacts) for REF mapping and commands.

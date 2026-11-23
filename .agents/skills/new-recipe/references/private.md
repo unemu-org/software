@@ -82,18 +82,29 @@ This separates descriptions from the open recipes and prepared-input scripts.
    `check` and `scaffold` do not accept `--store`; create every fresh store
    used above with `library scan` first.
 
-Recipe format 1.0 is frozen (unemupc decision-43). Publishing recipe
-artifacts still requires the maintainer's later decision; this migration
-adds no recipe push step. Recipes for private outputs are public text under
-`unemu/recipes/...`; outputs under `private/` never leave the user's own
-registries. A successful dry run does not authorise a push.
+Recipe format 1.0 is frozen (unemupc decision-43). Publish these public
+text artifacts through the `publish` workflow with explicit `mode=recipes`;
+its default `mode=both` is for open outputs and their matching recipes.
+Private paths require `recipes` alone, so their outputs are never built or
+published here. `recipes` also supports recipe-only updates. Explicit
+`mode=outputs` for open recipes leaves publication incomplete until their
+recipe artifacts follow at the same revision tags. The maintainer must
+run and approve publication, including each recipe's first push.
+`ci-promote` may write `unemu/recipes/**` (2026-11-23). The gate is the
+strict static check plus `guard:allowed`, with no output registry gate.
+Use `lib/publish.py --recipes` to dry-run the recipe artifact; the pipeline
+never needs the title's files. Every push is pulled anonymously and its
+exact file set and bytes compared with the repository. No experimental
+recipe push is possible: the guard allows only its derived revision REF.
 
-CI runs the same static check over all recipes. `lib/changed.py` includes
-private recipes for static checking; its `--open-only` selection excludes
-them from builds, fetching and conformance. `lib/publish.py` skips them by
-default and refuses any explicit selection containing one, including a
-mixed folder. Experimental and publication workflows never build or
-publish their outputs. The repository holds and checks descriptions only.
+Recipes for private outputs are public text under `unemu/recipes/...`;
+outputs under `private/` never leave the user's own registries. A successful
+dry run does not authorise a push. CI runs the static check and recipe
+artifact guard over all recipes. `lib/changed.py --open-only` excludes
+private recipes from builds, fetching and conformance; output mode in
+`lib/publish.py` still skips them by default and refuses explicit private
+selections, including mixed folders. Experimental and publication workflows
+never build or publish their outputs.
 
 ## Users
 

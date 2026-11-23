@@ -218,7 +218,7 @@ class Tree(unittest.TestCase):
             (self.root / path).write_text(text, encoding="utf-8")
         (self.root / "unemu.toml").write_text(PIN_TOML, encoding="ascii")
 
-    def private_recipe(self, text=PRIVATE):
+    def private_recipe(self, text=PRIVATE.replace("private/media/ibm-pc/demo", "private/media/ibm-pc/private-demo")):
         path = self.root / PRIVATE_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
@@ -262,7 +262,7 @@ class Tree(unittest.TestCase):
             code, _, stderr, _ = self.check(lines=lines, status=status)
             self.assertEqual(code, 1, stderr)
             self.assertIn(fragment, stderr)
-        path.write_text(PRIVATE.replace(f'digest = "{DIGEST}"\n', ""))
+        path.write_text(path.read_text().replace(f'digest = "{DIGEST}"\n', ""))
         code, _, stderr, _ = self.check(lines=ok)
         self.assertEqual(code, 1)
         self.assertIn("drafts, which are never published: " + PRIVATE_PATH, stderr)
@@ -285,6 +285,16 @@ class Tree(unittest.TestCase):
         with self.assertRaises(recipes.Refusal) as caught:
             recipes.load(self.root)
         self.assertIn("both name unemu/media/ibm-pc/demo:1.0-720k", str(caught.exception))
+
+    def test_derived_recipe_refs_are_unique_across_the_whole_tree(self):
+        self.private_recipe(PRIVATE)
+        # The selected firmware is unrelated to the collision between media recipes.
+        code, _, stderr, calls = self.check(str(self.root / "recipes/firmware/demo-bios.firmware.toml"))
+        self.assertEqual(code, 1)
+        self.assertIn("both derive recipe REF unemu/recipes/media/ibm-pc/demo:1.0-720k-r2", stderr)
+        self.assertIn(PRIVATE_PATH, stderr)
+        self.assertIn("recipes/media/demo/demo-1.0-720k.media.toml", stderr)
+        self.assertEqual(calls, [])
 
     def check(self, *operands, **config):
         bin_dir = pathlib.Path(self._directory.name) / "bin"

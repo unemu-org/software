@@ -5,7 +5,7 @@ asked.
 
     python3 -I lib/publish.py --cli UNEMU [--store DIR] [--fetch] [--library DIR]...
                               [--no-build] [--experimental RUN] [--skip-published]
-                              [--push] [--report FILE] [RECIPE|FOLDER|REF]...
+                              [--recipes [--guard-only]] [--push] [--report FILE] [RECIPE|FOLDER|REF]...
 
     --cli UNEMU         the unemu binary of the unemu release in
                         unemu.toml (lib/unemu.py fetch), or one built at its
@@ -48,8 +48,16 @@ asked.
                         set's or package's ref (unemu/media/ibm-pc/freedos:1.4-r1,
                         unemu/firmware/ibm-pc/<id>:r1); default: every open recipe
 
-Private recipes are descriptions only. The default skips them; an explicit
-selection including one is refused before any unemu or registry call.
+In output mode private recipes are descriptions only. The default skips
+them; an explicit selection including one is refused before any unemu or
+registry call. --recipes instead publishes public text artifacts for open
+AND private recipes, never building outputs. It statically checks each
+selection, requires its exact guard plan and gates open recipes on their
+published output revision digest. --guard-only defers that registry gate
+for offline CI, and cannot push. --recipes --push sends recipes and pulls
+each anonymously to compare the complete file set and bytes with this
+checkout. See docs/publishing.md, Recipe artifacts; the output-mode steps
+below remain unchanged.
 
 A recipe (lib/recipes.py, docs/recipes.md) is a recipe file of unemu: one
 set or package, its ref <repository>:<tag> from its identity table. Tags
@@ -145,6 +153,7 @@ lib/unemu.py next to itself.
 """
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import http.client
@@ -253,6 +262,8 @@ class Item:
     digest: str | None = None
     detail: str | None = None
     failed: bool = False
+    recipe_artifact: bool = False
+    gate: str | None = None
 
     @property
     def ref(self):
@@ -523,15 +534,26 @@ def read_pin(root):
         raise Failure(str(refusal)) from None
 
 
+def scrub_cli_text(text, env):
+    """Remove non-empty registry credential values before relaying CLI text."""
+    values = {env[name] for name in (PASSWORD_ENV, USER_ENV) if env.get(name)}
+    for value in sorted(values, key=len, reverse=True):
+        text = text.replace(value, "***")
+    return text
+
+
 def run_cli(cli, args, env):
     """Run unemu; its output is UTF-8, and anything else is an error."""
     try:
-        return subprocess.run([cli, *args], capture_output=True, encoding="utf-8", errors="strict",
+        done = subprocess.run([cli, *args], capture_output=True, encoding="utf-8", errors="strict",
                               env=env, check=False)
     except OSError as error:
         raise Failure(f"cannot run {cli}: {error.strerror or error}") from None
     except UnicodeDecodeError:
         raise Failure(f"unemu {' '.join(args[:2])}: output that is not UTF-8") from None
+    done.stdout = scrub_cli_text(done.stdout, env)
+    done.stderr = scrub_cli_text(done.stderr, env)
+    return done
 
 
 def last_line(text):
@@ -798,11 +820,21 @@ def parse_args(argv, environ):
                         help="read each pinned set's and package's own tag (and a set's alias) anonymously "
                              "first; one that already serves the pinned digest is neither built nor pushed")
     parser.add_argument("--push", action="store_true", help="push the checked sets and packages")
+    parser.add_argument("--recipes", action="store_true",
+                        help="publish recipe text artifacts, including private recipes; never build outputs")
+    parser.add_argument("--guard-only", action="store_true",
+                        help="with --recipes, check locally without the open-output registry gate; never push")
     parser.add_argument("--report", metavar="FILE", help="also write the summary's rows to FILE as JSON")
     parser.add_argument("selectors", nargs="*", metavar="RECIPE|FOLDER|REF")
     options = parser.parse_args(argv)
     if not options.cli:
         parser.error(f"--cli UNEMU (or ${CLI_ENV}) is required")
+    if options.guard_only and (not options.recipes or options.push):
+        parser.error("--guard-only needs --recipes and cannot be used with --push")
+    if options.recipes and (options.experimental or options.no_build or options.fetch
+                           or options.library or options.skip_published):
+        parser.error("--recipes cannot use output options: --experimental, --no-build, --fetch, "
+                     "--library or --skip-published")
     if options.experimental is not None and not RUN.fullmatch(options.experimental):
         parser.error("--experimental RUN takes the CI run id: 1 to 20 digits, not starting with 0")
     if options.no_build:
@@ -842,11 +874,11 @@ def find_cli(parser, cli, environ):
     return os.path.abspath(cli)
 
 
-def select(parser, root, selectors):
-    """Read every recipe, but pass only open ones to unemu.
+def select(parser, root, selectors, recipe_artifacts=False):
+    """Read recipes; private descriptions are allowed only for recipe artifacts.
 
-    An explicit selector that includes a private recipe is refused before
-    any unemu invocation, registry read or store access.
+    Output modes refuse an explicit private selection before any unemu
+    invocation, registry read or store access.
     """
     log("== read the recipes")
     try:
@@ -860,9 +892,9 @@ def select(parser, root, selectors):
     for recipe in every:
         log(f"{recipe.path}: {recipe.ref}{' (private: static check only)' if recipe.private else ''}"
             f"{'' if recipe.digest else ' (a draft)'}")
-    open_recipes = [r for r in every if not r.private]
+    eligible = [r for r in every if recipe_artifacts or not r.private]
     if not selectors:
-        chosen = open_recipes
+        chosen = eligible
     else:
         wanted = set()
         for selector in selectors:
@@ -872,12 +904,12 @@ def select(parser, root, selectors):
                 parser.error(f"{selector!r} is neither a recipe, a folder of recipes nor a ref "
                              "(unemu/media/ibm-pc/<work>:<release>-rN or unemu/firmware/ibm-pc/<id>:rN)")
             private = [r.path for r in matching if r.private]
-            if private:
+            if private and not recipe_artifacts:
                 parser.error("private recipes are static check only; never built, fetched or published: "
                              + ", ".join(private))
             wanted.update(r.path for r in matching)
-        chosen = [r for r in open_recipes if r.path in wanted]
-    return open_recipes, [Item(r, "", "") for r in chosen]
+        chosen = [r for r in eligible if r.path in wanted]
+    return eligible, [Item(r, "", "") for r in chosen]
 
 
 def experimental_tag(tag, run):
@@ -928,10 +960,21 @@ def rows(items):
         "outcome": item.outcome,
         "licence": item.license,
         "detail": item.detail,
+        **({"target": f"{item.repository}:{item.tag}", "recipe_digest": item.digest,
+            "output_digest": item.recipe.digest, "gate": item.gate} if item.recipe_artifact else {}),
     } for item in items]
 
 
 def summary(items, host, mode):
+    if items and items[0].recipe_artifact:
+        print(f"registry {host} (recipes, {mode})")
+        print("REF  RECIPE DIGEST  OUTPUT DIGEST  GATE  OUTCOME")
+        for item in items:
+            print(f"{host}/{item.repository}:{item.tag}  {item.digest or '-'}  "
+                  f"{item.recipe.digest or '-'}  {item.gate or '-'}  {item.outcome}")
+            if item.detail:
+                print(f"  {item.detail}")
+        return
     table = [("REPOSITORY", "TAG", "ALIAS", "DIGEST", "OUTCOME", "LICENCE")]
     for item in items:
         table.append((item.repository, item.tag, item.alias or "-", item.digest or "-", item.outcome,
@@ -967,9 +1010,15 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
 
     try:
         pin = read_pin(root)
-        every, items = select(parser, root, options.selectors)
+        every, items = select(parser, root, options.selectors, options.recipes)
         for item in items:
-            set_target(item, options.experimental)
+            if options.recipes:
+                item.repository = item.recipe.recipe_repository
+                item.tag, item.recipe_artifact = item.recipe.tag, True
+                if len(item.repository) > recipes.MAX_REPOSITORY:
+                    raise Failure(f"recipe repository {item.repository} is longer than {recipes.MAX_REPOSITORY}")
+            else:
+                set_target(item, options.experimental)
     except Failure as failure:
         log(f"refused: {failure}")
         return 1
@@ -989,6 +1038,157 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
             log(f"cannot write the report {options.report}: {error}")
             return 1
     return status
+
+
+def recipe_bundle(root, recipe):
+    """The exact repository files a pull may write, relative to the recipe's folder."""
+    folder = root / recipe.folder
+    names = [pathlib.Path(recipe.path).name, *recipe.bundled]
+    if recipe.work:
+        names.append(recipe.work + recipes.WORK_SUFFIX)
+    lock = root / recipe.lock
+    if not lock.is_dir() or lock.is_symlink():
+        raise Failure("recipe lock is missing or is not a directory")
+    names.extend(p.relative_to(folder).as_posix() for p in lock.rglob("*") if not p.is_dir())
+    expected = {}
+    for name in names:
+        rel = pathlib.PurePosixPath(name)
+        path = folder / name
+        if (rel.is_absolute() or ".." in rel.parts
+                or any((folder / pathlib.Path(*rel.parts[:i])).is_symlink()
+                       for i in range(1, len(rel.parts) + 1))):
+            raise Failure(f"recipe bundle has an unsafe path: {name}")
+        if not path.is_file():
+            raise Failure(f"recipe bundle lacks a regular file: {name}")
+        expected[name] = path.read_bytes()
+    return expected
+
+
+def recipe_dry_run(cli, root, item, target, store, config, env):
+    done = run_cli(cli, ["recipe", "push", str(root / item.recipe.path), target,
+                         "--dry-run", "--store", str(store), "--config", str(config)], env)
+    lines = done.stdout.splitlines()
+
+    def field(prefix):
+        values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+        if len(values) != 1:
+            raise Failure(f"recipe push --dry-run: expected one {prefix} line")
+        return values[0]
+
+    if done.returncode != 0 or field("guard:") != "allowed":
+        raise Failure(f"recipe push --dry-run: guard not allowed: {why(done)}")
+    if field("target:") != target or field("output:") != f"{item.ref}\t{item.recipe.digest}":
+        raise Failure("recipe push --dry-run: mismatched output or target")
+    digest = field("image:")
+    if not DIGEST.fullmatch(digest):
+        raise Failure("recipe push --dry-run: invalid recipe artifact digest")
+    return digest
+
+
+def recipe_push(cli, root, item, target, store, config, secrets):
+    done = run_cli(cli, ["recipe", "push", str(root / item.recipe.path), target,
+                         "--store", str(store), "--config", str(config)], secrets)
+    if done.returncode != 0:
+        raise Failure(f"recipe push: {why(done)}")
+    line = last_line(done.stdout)
+    simple = line.split("\t")
+    if simple in [[word, target, item.digest] for word in ("pushed", "unchanged")]:
+        return simple[0]
+    moved = re.fullmatch(r"moved\t([^\t]+)\t(sha256:[0-9a-f]{64}) -> "
+                         r"(sha256:[0-9a-f]{64}) \(the same output (sha256:[0-9a-f]{64})\)", line)
+    if moved and (moved[1], moved[3], moved[4]) == (target, item.digest, item.recipe.digest):
+        return "moved"
+    raise Failure(f"recipe push: unexpected last line {line!r}")
+
+
+def recipe_readback(cli, item, target, destination, config, env, expected):
+    """Anonymous pull: exact file set and bytes, including all lock files."""
+    done = run_cli(cli, ["recipe", "pull", target, "--to", str(destination),
+                         "--config", str(config)], env)
+    if done.returncode != 0:
+        raise Failure(f"recipe pull: {why(done)}")
+    result = last_line(done.stdout).split("\t")
+    if (len(result) != 4 or result[:3] != ["pulled", target, item.digest]
+            or pathlib.Path(result[3]) != destination / pathlib.Path(item.recipe.path).name):
+        raise Failure("recipe pull: unexpected pulled line")
+    actual = {}
+    for path in destination.rglob("*"):
+        name = path.relative_to(destination).as_posix()
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise Failure(f"recipe pull: not a regular file or directory: {name}")
+        if path.is_file():
+            actual[name] = path.read_bytes()
+    if actual.keys() != expected.keys():
+        raise Failure("recipe pull: file set differs (missing: "
+                      + ", ".join(sorted(expected.keys() - actual.keys())) + "; extra: "
+                      + ", ".join(sorted(actual.keys() - expected.keys())) + ")")
+    for name, data in expected.items():
+        if actual[name] != data:
+            raise Failure(f"recipe pull: differing bytes: {name}")
+
+
+def run_recipes(options, root, cli, host, items, work, store, config, env, registry, environ):
+    """Recipe text only. The guard-only check can never authorize a push."""
+    empty = work / "empty"
+    empty.mkdir()
+    done = run_cli(cli, ["library", "scan", str(empty), "--store", str(store)], env)
+    if done.returncode != 0:
+        for item in items:
+            item.fail("failed", f"create fresh store: {why(done)}")
+        summary(items, host, "dry run")
+        return 1
+    bundles = {}
+    for item in items:
+        item.gate = "static check refused"
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                checked = recipes.check(cli, root, [str(root / item.recipe.path)], env)
+            if checked:
+                raise Failure("static check refused recipe (no drafts, findings or drift allowed)")
+            bundles[item.recipe.path] = recipe_bundle(root, item.recipe)
+            target = f"{host}/{item.repository}:{item.tag}"
+            item.gate = "guard refused"
+            item.digest = recipe_dry_run(cli, root, item, target, store, config, env)
+            log(f"{target}: guard:allowed")
+            if item.recipe.private:
+                item.gate = "private: static + guard"
+            elif options.guard_only:
+                item.gate = "output gate deferred"
+            else:
+                item.gate = "output gate refused"
+                served = registry(host, item.recipe.repository, item.recipe.tag)
+                if served != item.recipe.digest:
+                    raise Failure(f"open output gate refused: {item.ref} on {host} serves "
+                                  f"{served or 'no published output'}; requires {item.recipe.digest}")
+                item.gate = "output published"
+            item.outcome = "guard only" if options.guard_only else "dry run"
+        except Exception as error:  # noqa: BLE001 - every failure reaches the summary
+            item.fail("refused", describe(error))
+    failed = any(item.failed for item in items)
+    if options.push:
+        secrets = dict(env, **{USER_ENV: environ[USER_ENV], PASSWORD_ENV: environ[PASSWORD_ENV], HOST_ENV: host})
+        for number, item in enumerate(items):
+            if item.failed:
+                continue
+            if failed:
+                item.outcome, item.detail = "held", "not pushed: another check or an earlier push failed"
+                continue
+            target = f"{host}/{item.repository}:{item.tag}"
+            try:
+                outcome = recipe_push(cli, root, item, target, store, config, secrets)
+            except Exception as error:  # noqa: BLE001
+                item.fail("failed", describe(error))
+                failed = True
+                continue
+            try:
+                recipe_readback(cli, item, target, work / f"pulled-{number}", config, env,
+                                bundles[item.recipe.path])
+                item.outcome = outcome
+            except Exception as error:  # noqa: BLE001
+                item.fail("unconfirmed", describe(error))
+                failed = True
+    summary(items, host, "push" if options.push else "dry run")
+    return int(failed)
 
 
 def run(options, root, cli, pin, host, every, items, work, store_arg, registry, environ):
@@ -1014,6 +1214,10 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
         "LC_ALL": "C",
         "TZ": "UTC",
     }
+    # Recipe push constructs an HTTPS client even for its local guard.
+    # Honour an explicit CA bundle without inheriting credentials or config.
+    if options.recipes and (ca_bundle := _ca_bundle(environ)):
+        env["SSL_CERT_FILE"] = ca_bundle
     mode = "push" if options.push else "dry run"
     log(f"unemu {cli}")
     log(f"unemu pin {pin.commit} (unemu {pin.tag}, {PIN_FILE})")
@@ -1023,6 +1227,8 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
         log(f"refused: {refusal}")
         return 1
     log(f"unemu --version reports commit {pin.commit}, as pinned")
+    if options.recipes:
+        return run_recipes(options, root, cli, host, items, work, store, config, env, registry, environ)
     log("== check the recipes")
     try:
         check_recipes(cli, root, every, env)

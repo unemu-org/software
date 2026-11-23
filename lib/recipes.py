@@ -111,6 +111,10 @@ class Recipe:
         return f"{self.repository}:{self.tag}"
 
     @property
+    def recipe_repository(self):
+        return "unemu/recipes/" + self.repository.split("/", 1)[1]
+
+    @property
     def folder(self):
         return self.path.rpartition("/")[0]
 
@@ -280,14 +284,20 @@ def load(root):
 def unique(recipes):
     """No two recipes name one ref, and no alias is a ref or another
     recipe's alias of the same repository: a revision tag names one artifact
-    and an alias follows one release."""
+    and an alias follows one release. Derived recipe refs must also be
+    unique across open and private outputs."""
     seen = {}
+    recipe_refs = {}
     for recipe in recipes:
         names = [recipe.ref] + ([f"{recipe.repository}:{recipe.alias}"] if recipe.alias else [])
         for name in names:
             if name in seen:
                 raise Refusal(f"{recipe.path} and {seen[name]} both name {name}")
             seen[name] = recipe.path
+        name = f"{recipe.recipe_repository}:{recipe.tag}"
+        if name in recipe_refs:
+            raise Refusal(f"{recipe.path} and {recipe_refs[name]} both derive recipe REF {name}")
+        recipe_refs[name] = recipe.path
 
 
 # --- the check ----------------------------------------------------------------

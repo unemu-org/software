@@ -128,6 +128,12 @@ def write_tag(store, ref, name):
         json.dump(index, handle)
 
 
+if (argv[:2] in (["image", "push"], ["recipe", "push"])
+        and "--dry-run" not in argv and "push_response" in config):
+    response = config["push_response"]
+    print(response.get("stdout", ""))
+    print(response.get("stderr", ""), file=sys.stderr)
+    sys.exit(response.get("status", 1))
 if argv == ["--version"]:
     if config.get("version") is None:
         print("unknown or extra arguments", file=sys.stderr)
@@ -142,6 +148,55 @@ if argv[:2] == ["recipe", "check"]:
             print(path + ": ok, recipe")
     print(str(len(argv) - 2) + " files checked, " + str(config.get("check_findings", 0)) + " findings")
     sys.exit(1 if config.get("check_findings") else 0)
+if argv[:2] == ["library", "scan"]:
+    os.makedirs(value("--store"))
+    sys.exit(0)
+if argv[:2] == ["recipe", "push"]:
+    from pathlib import Path
+    path, target = Path(argv[2]), argv[3]
+    recipe = tomllib.loads(path.read_text())
+    identity = recipe.get("media", recipe.get("firmware"))
+    tag = (identity.get("release", "") + "-" if identity.get("release") else "") + "r" + str(identity["revision"])
+    output = identity["name"] + ":" + tag
+    digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    if "--dry-run" in argv:
+        print("target:" + config.get("recipe_target", target))
+        print("image:" + config.get("recipe_image", digest))
+        print("recipe:" + path.name)
+        print("output:" + config.get("recipe_output", output + "\t" + identity.get("digest", "")))
+        print("guard:" + config.get("recipe_guard", "allowed"))
+        sys.exit(config.get("recipe_dry_status", 0))
+    with open(@REGISTRY@, "w") as handle:
+        json.dump({"path": str(path), "digest": digest}, handle)
+    word = config.get("recipe_word", "pushed")
+    ending = config.get("recipe_digest", digest)
+    if word == "moved":
+        ending = "sha256:" + "f" * 64 + " -> " + ending + " (the same output " + config.get("moved_output", identity["digest"]) + ")"
+    print(word + "\t" + config.get("recipe_push_target", target) + "\t" + ending)
+    sys.exit(config.get("recipe_push_status", 0))
+if argv[:2] == ["recipe", "pull"]:
+    from pathlib import Path
+    with open(@REGISTRY@) as handle:
+        pushed = json.load(handle)
+    path, destination = Path(pushed["path"]), Path(value("--to"))
+    recipe = tomllib.loads(path.read_text())
+    names = [path.name]
+    if recipe.get("work"):
+        names.append(recipe["work"] + ".work.toml")
+    names += [v["name"] for v in recipe.get("input", {}).values() if v.get("bundle")]
+    names += [p.relative_to(path.parent).as_posix() for p in Path(str(path) + ".lock").rglob("*") if p.is_file()]
+    for name in names:
+        if name == config.get("pull_missing"):
+            continue
+        dest = destination / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((path.parent / name).read_bytes() + (b"different" if name == config.get("pull_different") else b""))
+    if config.get("pull_extra"):
+        (destination / "extra.txt").write_text("extra")
+    if config.get("pull_link"):
+        (destination / "link").symlink_to(path)
+    print("pulled\t" + argv[2] + "\t" + config.get("pull_digest", pushed["digest"]) + "\t" + str(destination / path.name))
+    sys.exit(config.get("recipe_pull_status", 0))
 if argv[:2] == ["recipe", "build"]:
     with open(argv[2], "rb") as handle:
         recipe = tomllib.load(handle)
@@ -828,6 +883,223 @@ class Private(Case):
         self.assertEqual([c["argv"] for c in self.repo.calls()], [["--version"]])
         self.assertEqual(json.loads(report.read_text()), [])
         self.assertEqual(self.repo.registry.calls, [])
+
+
+class RecipeArtifacts(Case):
+    def prepare(self, private=False):
+        self.repo.media()
+        self.repo.firmware()
+        if private:
+            Private.add_private(self)
+            Private.add_private(self, "firmware", "recipes/private/firmware")
+        for recipe in recipes.load(self.repo.root):
+            folder = self.repo.root / recipe.folder
+            if recipe.work:
+                (folder / (recipe.work + ".work.toml")).write_text('recipe = "1.0"\n')
+            for name in recipe.bundled:
+                (folder / name).write_text("our bundled text\n")
+            lock = self.repo.root / recipe.lock / "sha256"
+            lock.mkdir(parents=True)
+            (lock / ("a" * 64)).write_text("locked text\n")
+            self.repo.registry.held[f"{HOST}/{recipe.ref}"] = recipe.digest
+
+    def test_mapping_selection_report_and_no_output_operations(self):
+        self.prepare(private=True)
+        report = self.repo.base / "report.json"
+        code, stdout, stderr = self.repo.run("--recipes", "--report", str(report))
+        self.assertEqual(code, 0, stderr + stdout)
+        rows = json.loads(report.read_text())
+        self.assertEqual(len(rows), 5)
+        targets = {
+            FIRMWARE_REF: "unemu/recipes/firmware/ibm-pc/demo-bios:r1",
+            f"{MEDIA}:{T1}": "unemu/recipes/media/ibm-pc/demo:2.0-r1",
+            f"{MEDIA}:{T2}": "unemu/recipes/media/ibm-pc/demo:2.0-720k-r1",
+            "private/media/ibm-pc/demo:1.0-r1": "unemu/recipes/media/ibm-pc/demo:1.0-r1",
+            "private/firmware/ibm-pc/demo:r1": "unemu/recipes/firmware/ibm-pc/demo:r1",
+        }
+        pinned = {r.path: r.digest for r in recipes.load(self.repo.root)}
+        for row in rows:
+            self.assertEqual(row["target"], targets[row["ref"]])
+            self.assertEqual(row["recipe_digest"], "sha256:" + sha256((self.repo.root / row["recipe"]).read_bytes()))
+            self.assertEqual(row["output_digest"], pinned[row["recipe"]])
+            self.assertIn(row["target"], stdout)
+        self.assertEqual(self.repo.builds(), [])
+        self.assertFalse(any(c["argv"][0] == "image" for c in self.repo.calls()))
+        self.assertTrue(all(not repo.startswith("private/") for _, repo, _ in self.repo.registry.calls))
+        # Work files participate in the static check, not only recipes.
+        checked = [c["argv"] for c in self.repo.calls() if c["argv"][:2] == ["recipe", "check"]]
+        self.assertTrue(any(str(self.repo.root / "recipes/media/demo/demo.work.toml") in a for a in checked))
+
+    def test_recipe_ref_collisions_outside_selection_refuse_every_mode(self):
+        self.repo.media()
+        self.repo.firmware()
+        private = self.repo.root / "recipes/private/collision.media.toml"
+        private.parent.mkdir(parents=True)
+        text = (self.repo.root / M1).read_text().replace("unemu/media/", "private/media/")
+        text = text[:text.index("[license]")]
+        private.write_text(text)
+        for args in (("--recipes",), ("--recipes", "--guard-only"), ("--recipes", "--push")):
+            with self.subTest(args=args):
+                code, stdout, stderr = self.repo.run(*args, FIRMWARE_REF)
+                self.assertEqual(code, 1, stdout + stderr)
+                self.assertIn("both derive recipe REF unemu/recipes/media/ibm-pc/demo:2.0-r1", stderr)
+                self.assertIn(M1, stderr)
+                self.assertIn("recipes/private/collision.media.toml", stderr)
+                self.assertEqual(self.repo.calls(), [])
+                self.assertEqual(self.repo.registry.calls, [])
+
+    def test_static_refusals_and_missing_ok_prevent_push(self):
+        self.prepare()
+        for settings in ({"check_findings": 1}, {"check_lines": ["drift: work changed"]},
+                         {"check_silent": [str(self.repo.root / M1)]}):
+            with self.subTest(settings=settings):
+                self.repo.configure(**settings)
+                code, stdout, stderr = self.repo.run("--recipes", "--push", M1)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("static check refused", stdout)
+                self.assertFalse(self.repo.pushed.exists())
+        self.repo.configure()
+        path = self.repo.root / M1
+        path.write_text(path.read_text().replace(f'digest = "{fake_digest(f"{MEDIA}:{T1}")}"', ""))
+        code, stdout, _ = self.repo.run("--recipes", M1)
+        self.assertEqual(code, 1)
+        self.assertIn("static check refused", stdout)
+
+    def test_open_output_gate_and_guard_only(self):
+        self.prepare()
+        for served in (None, "sha256:" + "f" * 64):
+            self.repo.registry.held[f"{HOST}/{MEDIA}:{T1}"] = served
+            code, stdout, stderr = self.repo.run("--recipes", "--push", M1)
+            self.assertEqual(code, 1, stderr)
+            self.assertIn("open output gate refused", stdout)
+            self.assertIn("guard:allowed", stderr)
+            self.assertFalse(self.repo.pushed.exists())
+        self.repo.registry.error = "offline"
+        code, stdout, _ = self.repo.run("--recipes", M1)
+        self.assertEqual(code, 1)
+        self.assertIn("offline", stdout)
+        self.repo.registry.calls.clear()
+        code, stdout, stderr = self.repo.run("--recipes", "--guard-only")
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("output gate deferred", stdout)
+        self.assertEqual(self.repo.registry.calls, [])
+
+    def test_guard_and_plan_must_match(self):
+        self.prepare()
+        for settings in ({"recipe_guard": "refused"}, {"recipe_target": "wrong.invalid/ref:r1"},
+                         {"recipe_output": f"{MEDIA}:{T2}\t{fake_digest(f'{MEDIA}:{T1}')}"},
+                         {"recipe_output": f"{MEDIA}:{T1}\tsha256:{'f' * 64}"},
+                         {"recipe_image": "bad"}, {"recipe_dry_status": 1}):
+            with self.subTest(settings=settings):
+                self.repo.configure(**settings)
+                code, _, stderr = self.repo.run("--recipes", "--push", M1)
+                self.assertEqual(code, 1, stderr)
+                self.assertFalse(self.repo.pushed.exists())
+
+    def test_accepted_pushes_are_read_back_without_credentials(self):
+        self.prepare()
+        for word in ("pushed", "unchanged", "moved"):
+            with self.subTest(word=word):
+                self.repo.configure(recipe_word=word)
+                code, stdout, stderr = self.repo.run("--recipes", "--push", M1)
+                self.assertEqual(code, 0, stderr + stdout)
+                self.assertIn(word, stdout)
+        calls = self.repo.calls()
+        for call in calls:
+            argv, env = call["argv"], call["env"]
+            push = argv[:2] == ["recipe", "push"] and "--dry-run" not in argv
+            self.assertEqual(env.get(PASSWORD_ENV), SECRET if push else None)
+            self.assertEqual(env.get(USER_ENV), USER if push else None)
+            self.assertEqual(env["LC_ALL"], "C")
+            self.assertEqual(env["TZ"], "UTC")
+        self.assertEqual(sum(c["argv"][:2] == ["recipe", "pull"] for c in calls), 3)
+        self.assertNotIn(SECRET, stdout + stderr)
+
+    def test_bad_push_outcomes_fail_and_stop(self):
+        self.prepare()
+        for settings in ({"recipe_word": "sent"}, {"recipe_word": "unknown"},
+                         {"recipe_push_target": "unemu/recipes/media/ibm-pc/demo:2.0-r1"},
+                         {"recipe_push_target": "other"},
+                         {"recipe_digest": "sha256:" + "f" * 64}, {"recipe_push_status": 1},
+                         {"recipe_word": "moved", "moved_output": "sha256:" + "f" * 64}):
+            with self.subTest(settings=settings):
+                self.repo.configure(**settings)
+                self.repo.log.unlink(missing_ok=True)
+                code, stdout, stderr = self.repo.run("--recipes", "--push")
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("held", stdout)
+                self.assertEqual(sum(c["argv"][:2] == ["recipe", "push"] and "--dry-run" not in c["argv"]
+                                     for c in self.repo.calls()), 1)
+
+    def test_push_cli_credentials_are_scrubbed_from_errors_and_reports(self):
+        self.prepare()
+        text = f"CLI diagnostic: password={SECRET}; user={USER}"
+        report = self.repo.base / "report.json"
+        for mode in ((), ("--recipes",)):
+            for response in ({"stderr": text}, {"stdout": text}, {"stdout": text, "status": 0}):
+                with self.subTest(mode=mode, response=response):
+                    self.repo.configure(push_response=response)
+                    code, stdout, stderr = self.repo.run(*mode, "--push", "--report", str(report), M1)
+                    self.assertEqual(code, 1, stdout + stderr)
+                    relayed = stdout + stderr + report.read_text()
+                    self.assertIn("password=***; user=***", relayed)
+                    self.assertNotIn(SECRET, relayed)
+                    self.assertNotIn(USER, relayed)
+                    self.assertFalse(self.repo.pushed.exists())
+
+    def test_scrubbing_empty_and_overlapping_credentials(self):
+        self.assertEqual(publish.scrub_cli_text("unchanged", {USER_ENV: "", PASSWORD_ENV: ""}), "unchanged")
+        self.assertEqual(publish.scrub_cli_text("unchanged", {}), "unchanged")
+        self.assertEqual(publish.scrub_cli_text("user-password user", {
+            USER_ENV: "user", PASSWORD_ENV: "user-password",
+        }), "*** ***")
+
+    def test_readback_requires_exact_files_and_bytes(self):
+        self.prepare()
+        for settings in ({"pull_different": "a.media.toml"}, {"pull_different": "demo.work.toml"},
+                         {"pull_different": "licenses.txt"}, {"pull_different": "a.media.toml.lock/sha256/" + "a" * 64},
+                         {"pull_extra": True}, {"pull_missing": "licenses.txt"}, {"pull_link": True},
+                         {"pull_digest": "sha256:" + "f" * 64}, {"recipe_pull_status": 1}):
+            with self.subTest(settings=settings):
+                self.repo.configure(**settings)
+                code, stdout, stderr = self.repo.run("--recipes", "--push", M1)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("unconfirmed", stdout)
+
+    def test_private_artifact_has_no_output_gate_and_can_push(self):
+        path, _ = Private.add_private(self)
+        lock = self.repo.root / (path + ".lock/sha256")
+        lock.mkdir(parents=True)
+        (lock / ("a" * 64)).write_text("text")
+        self.repo.registry.error = "must never read a private output"
+        code, stdout, stderr = self.repo.run("--recipes", "--push", path)
+        self.assertEqual(code, 0, stderr + stdout)
+        self.assertIn("private: static + guard", stdout)
+        self.assertEqual(self.repo.registry.calls, [])
+        self.assertEqual(self.repo.builds(), [])
+
+    def test_incompatible_options_and_reused_store_are_usage_errors(self):
+        self.prepare()
+        for args in (("--guard-only",), ("--recipes", "--guard-only", "--push"),
+                     ("--recipes", "--fetch"), ("--recipes", "--experimental", "42"),
+                     ("--recipes", "--skip-published"), ("--recipes", "--no-build"),
+                     ("--recipes", "--store", str(self.repo.root))):
+            code, _, stderr = self.repo.run(*args)
+            self.assertEqual(code, 2, stderr)
+        self.assertEqual(self.repo.calls(), [])
+
+    def test_explicit_ca_bundle_reaches_recipe_registry_calls_only(self):
+        self.prepare()
+        ca = self.repo.base / "ca.pem"
+        ca.write_text("synthetic CA bundle")
+        env = self.repo.environ(push=True, SSL_CERT_FILE=str(ca), UNRELATED="must not escape")
+        code, stdout, stderr = self.repo.run("--recipes", "--push", M1, environ=env)
+        self.assertEqual(code, 0, stderr + stdout)
+        calls = self.repo.calls()
+        for call in calls:
+            self.assertNotIn("UNRELATED", call["env"])
+            if call["argv"][:2] in (["recipe", "push"], ["recipe", "pull"]):
+                self.assertEqual(call["env"]["SSL_CERT_FILE"], str(ca))
 
 
 class Pin(Case):

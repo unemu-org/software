@@ -10,7 +10,8 @@ which unemupc's library and machine templates pull.
 
 Private recipes under `recipes/private/` also describe commercial and other
 non-open titles for users to build from their own files: no title files or input
-URLs live here, and CI checks these recipes statically without building or publishing them.
+URLs live here, and CI checks these recipes statically without building or publishing
+their outputs. Their recipe text artifacts are public under `unemu/recipes/`.
 
 ## Principles
 
@@ -19,12 +20,16 @@ URLs live here, and CI checks these recipes statically without building or publi
 - **Everything pinned.** Every input by size and SHA-256, every set and
   package by its digest and lock, and the CLI that builds them by its
   release.
+- **Every output has a published recipe.** Everything under `unemu/media/**`
+  and `unemu/firmware/**` on the family registry comes from a pinned recipe
+  of this repository and has its recipe artifact under `unemu/recipes/...`
+  at the same revision tag. An output without its published recipe is incomplete.
 - **Open only when every part is covered.** Real SPDX licences, a licence
   index for every program of a set, and the corresponding source of
   copyleft content; when in doubt, nothing is published.
 - **Reproducible.** The same recipe gives the same bytes and digests on
   every run and host.
-- **A revision tag never moves.** A published `rN` tag (`freedos:1.4-r1`,
+- **An output revision tag never moves.** A published `rN` tag (`freedos:1.4-r1`,
   a package's `r1`) is never overwritten; a set's release alone
   (`freedos:1.4`) is the alias of its newest revision.
 
@@ -62,13 +67,20 @@ See [docs/recipes.md](docs/recipes.md#planning-from-local-files).
 
 Recipe format **1.0 is frozen** (unemupc decision-43); its schema is the
 [recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
-Publishing recipe artifacts requires a later maintainer decision.
+Recipe artifacts publish through the approved `publish` workflow, after their
+open outputs. Private recipes publish as public text; their outputs stay private.
+
+The link is one-way: the recipe artifact names the output digest. The output
+cannot name its recipe because the recipe's lock contains that output digest.
+Lookup is by name: `unemu/media/X:tag` maps to `unemu/recipes/media/X:tag`,
+and firmware follows the same rule. Publication belongs to this repository;
+the unemu project pushes nothing to the family registry.
 
 ## Publishing
 
 `lib/publish.py --push` pushes only when every selected set and package
 passed its checks and its recipe pins its digest. The registry credentials
-come from the environment and reach only the `unemu image push` call. A
+come from the environment and reach only the unemu push call. A
 revision tag never moves: one that already holds another digest is
 refused, and `--move` is never used. Each set's release alias is pushed
 after its revision, and refused, never moved, when it names another image;
@@ -76,10 +88,22 @@ sets and packages have no `latest`. For CI, `--experimental RUN` targets
 `unemu/experimental/` instead. Pushing is the maintainer's step. Details:
 [docs/publishing.md](docs/publishing.md).
 
+`lib/publish.py --recipes` checks every open and private recipe, dry-runs
+its recipe guard and anonymously verifies that each open output's revision
+tag serves its pinned digest. `--recipes --guard-only` runs offline for CI;
+it defers that output gate and cannot push. `--recipes --push` publishes
+the text artifacts and pulls each back anonymously for exact byte comparison.
+The `publish` workflow defaults to `both`: outputs first, then their recipes,
+in one approved run. Explicit `outputs` mode leaves publication incomplete
+until the recipes follow; `recipes` mode supports recipe-only updates and
+private recipes. Each recipe's first push needs the maintainer's approval
+of that run. See
+[recipe artifacts](docs/publishing.md#recipe-artifacts).
+
 [CI](docs/publishing.md#ci) checks what a change touches, pushes it from
 `main` to `unemu/experimental/` and publishes it on the maintainer's
-approval; the workflows that publish never rebuild or push what is already
-published.
+approval; output publication never rebuilds or pushes outputs already published
+at their pinned digests. Recipe text can be updated for the same output digest.
 
 ## Repository layout
 

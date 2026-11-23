@@ -194,6 +194,75 @@ def workflow_scalars(text):
 
 
 class WorkflowPolicy(unittest.TestCase):
+    def test_publish_handover_handles_recipes_and_already_published_outputs(self):
+        script = workflow_run("publish.yml", "What to push")
+        for mode, output_pending in (("outputs", False), ("outputs", True),
+                                     ("recipes", False), ("both", False), ("both", True)):
+            with self.subTest(mode=mode, output_pending=output_pending), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                runner = root / "runner"
+                runner.mkdir()
+                if mode != "recipes":
+                    (runner / "report.json").write_text(json.dumps([
+                        {"outcome": "dry run" if output_pending else "published"}]))
+                    (runner / "dry-run.txt").write_text("output dry run\n")
+                if mode != "outputs":
+                    (runner / "recipes.json").write_text('[{"outcome": "guard only"}]')
+                    (runner / "recipes.txt").write_text("recipe guards\n")
+                if output_pending:
+                    (runner / "store/images").mkdir(parents=True)
+                    (runner / "store/images/index.json").write_text("checked OCI layout")
+                    (runner / "store/store.toml").write_text("schema = 1\n")
+                output = root / "github-output"
+                done = subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=root,
+                                      env=dict(GIT_ENV, MODE=mode, RUNNER_TEMP=str(runner), GITHUB_OUTPUT=str(output)),
+                                      capture_output=True, text=True, check=False)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()),
+                                 {"any": str(output_pending or mode != "outputs").lower(),
+                                  "outputs": str(output_pending).lower()})
+                self.assertEqual((root / "handover/recipes.json").exists(), mode != "outputs")
+                self.assertEqual((root / "handover/store/images/index.json").exists(), output_pending)
+                self.assertEqual((root / "handover/store/store.toml").exists(), output_pending)
+                self.assertEqual((root / "handover/store").exists(), output_pending)
+
+    def test_recipe_publication_is_approved_and_follows_outputs(self):
+        check = (HERE.parent / ".github/workflows/check.yml").read_text()
+        guard = next(s for s in workflow_steps(check) if s.get("name", "").strip() == "Check every recipe artifact guard")
+        self.assertNotIn("if", guard)
+        self.assertIn("--recipes --guard-only", guard["run"])
+        self.assertNotIn("--push", guard["run"])
+        self.assertNotIn("--recipes", (HERE.parent / ".github/workflows/experimental.yml").read_text())
+        text = (HERE.parent / ".github/workflows/publish.yml").read_text()
+        self.assertIn("options: [outputs, recipes, both]", text)
+        mode = text.split("      mode:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("        default: both\n", mode)
+        build, push = text.split("\n  push:\n")
+        self.assertIn("any: ${{ steps.built.outputs.any }}", build)
+        self.assertIn("outputs: ${{ steps.built.outputs.outputs }}", build)
+        self.assertIn("needs.build.outputs.any == 'true'", push)
+        self.assertIn("environment: media", push)
+        self.assertNotIn("secrets.", build)
+        self.assertIn("--recipes --guard-only", build)
+        step = next(s for s in workflow_steps(build) if s.get("name", "").strip() == "Build and check")
+        self.assertEqual(step["if"].strip(), "inputs.mode != 'recipes'")
+        steps = list(workflow_steps(push))
+        output_index = next(i for i, s in enumerate(steps) if s.get("name", "").strip() == "Push to unemu/media/ and unemu/firmware/")
+        recipe_index = next(i for i, s in enumerate(steps) if s.get("name", "").strip() == "Push to unemu/recipes/")
+        self.assertLess(output_index, recipe_index)
+        download = next(s for s in steps if s.get("name", "").strip() == "Take the store of the build job")
+        for step in (download, steps[output_index]):
+            self.assertEqual(step["if"].strip(), "needs.build.outputs.outputs == 'true'")
+        recipe = steps[recipe_index]
+        self.assertEqual(recipe["if"].strip(), "inputs.mode != 'outputs'")
+        self.assertIn("--recipes --push", recipe["run"])
+        self.assertNotIn("--guard-only", recipe["run"])
+        self.assertNotIn("handover/", recipe["run"])
+        self.assertEqual(workflow_scalars(recipe["env"])["UNEMU_REGISTRY_USER"], "ci-promote")
+        self.assertIn("--skip-published --no-build", steps[output_index]["run"])
+        self.assertIn("words=(recipes/media recipes/firmware)", build)
+        self.assertIn("words=(recipes/media recipes/firmware)", push)
+
     def test_actions_follow_the_unemu_release_pin(self):
         root = HERE.parent
         pin = tomllib.loads((root / "unemu.toml").read_text())

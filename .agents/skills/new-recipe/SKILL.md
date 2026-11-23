@@ -102,7 +102,8 @@ and ask the maintainer; record the question in the bead.
 
 The commands below are for open outputs; private recipes follow
 [references/private.md](references/private.md) and are never built by CI
-or `lib/publish.py`. All store-using commands must pass `--store`
+or output mode in `lib/publish.py`. Recipe-artifact mode (`--recipes`)
+checks and publishes their public text only. All store-using commands must pass `--store`
 explicitly. `check`, `show` and `scaffold` have no store option.
 unemu 0.0.4 has no `recipe build --create`: create each fresh store first
 with `unemu library scan "$EMPTY" --store "$S1"`, where `$EMPTY` is an
@@ -135,13 +136,40 @@ rebuilds on Linux; its digests must equal the macOS pins.
 
 ## 5. Publish
 
-**Recipe format 1.0 is frozen (unemupc decision-43), but publishing recipe
-artifacts requires the maintainer's later decision.** Verification still
-includes the local recipe push dry run above; this migration adds no recipe
-push step. Recipes of private outputs are public text under
-`unemu/recipes/...`; their outputs under `private/` never leave the user's
-registries. Publishing outputs and publishing recipes are separate actions;
-neither is authorised by a successful dry run.
+**Recipe format 1.0 is frozen (unemupc decision-43).** Recipe artifacts
+publish through the maintainer-approved `publish` workflow. The maintainer
+uses the default `mode=both` for open outputs and approves the protected
+push job: outputs first, then their recipes, in one approved run. Each
+recipe's first push requires approval of that run. `ci-promote`
+has write access to `unemu/recipes/**` (decision of 2026-11-23).
+
+Open recipes publish only after their outputs: the anonymous revision-tag
+read must serve exactly the pinned output digest. `both` pushes outputs
+first, then recipes. Every output under `unemu/media/**` or
+`unemu/firmware/**` must come from a pinned recipe of this repository and
+have its recipe artifact at the same revision tag. An output without its
+published recipe is incomplete. Explicit `mode=outputs` is an exception
+that leaves publication incomplete until the recipe follows; use
+`mode=recipes` for recipe-only updates and private recipes.
+
+The link is one-way: the recipe artifact names the output digest, and the
+output cannot name its recipe because the lock contains that digest.
+Lookup is by name: `unemu/media/X:tag` maps to
+`unemu/recipes/media/X:tag`, likewise for firmware. Publication belongs to
+this repository; the unemu project pushes nothing to the family registry.
+Private paths require `recipes` alone. Private recipes have no output gate:
+the strict static check and `guard:allowed` suffice.
+Recipes of private outputs are public text under `unemu/recipes/...`;
+outputs under `private/` never leave the user's registries.
+
+`python3 -I lib/publish.py --cli out/unemu/unemu --recipes --guard-only FILE`
+checks locally without a registry read; the normal `--recipes` dry run
+also enforces the output gate. `--guard-only` cannot push. Every successful
+push (sent, unchanged or moved with the same output digest) is pulled
+anonymously into a fresh folder and compared with the repository's exact
+file set and bytes. There is no experimental recipe push: the guard
+refuses any other path, aliases and CI tags. A successful dry run does not
+authorise a push. See `docs/publishing.md`, Recipe artifacts.
 
 unemupc's template build builds its three firmware packages and FreeDOS
 sets from our recipes, copied into `crates/pc-image/data/recipes/` in
@@ -151,8 +179,9 @@ locks and digests before publication.
 
 For open outputs, merge (fast-forward main to the signed commit after green checks);
 `experimental` pushes `unemu/experimental/...:<release>-ci<RUN>-r1`; check
-it anonymously; the maintainer runs and approves `publish`; verify the
-revision tag and the alias anonymously; update the bd memory `published`;
+it anonymously; the maintainer runs and approves `publish` with the default
+`mode=both`; verify the output revision tag, alias and matching recipe
+artifact anonymously; update the bd memory `published`;
 coordinate the firmware and FreeDOS files and digests as described above.
 
 ## Pitfalls met so far

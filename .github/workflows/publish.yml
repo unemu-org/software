@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Publication to <host>/unemu/media/ and <host>/unemu/firmware/, started by
+# Publication to <host>/unemu/media/, unemu/firmware/ and unemu/recipes/, started by
 # hand. Only the sets and packages whose own tag (or a set's release alias)
 # is not on the registry yet are built and pushed; everything already
 # published is skipped, never rebuilt or pushed again. Two jobs: the build
@@ -9,7 +9,9 @@
 # (environment media), and hands the built store on. The push job, on a
 # fresh runner, installs unemu, takes the built store and reads the
 # selection from the input itself, checks every byte of that store against
-# the recipes' pins and pushes it. See docs/publishing.md.
+# the recipes' pins and pushes it. Recipe artifacts are guard-checked in
+# build, recreated from the push checkout, gated on published open outputs,
+# then pushed and pulled anonymously for byte comparison. See docs/publishing.md.
 
 name: publish
 
@@ -20,11 +22,20 @@ on:
         description: >-
           Recipe files, folders of recipes or refs to publish, separated by spaces
           (recipes/media/freedos, unemu/media/ibm-pc/<work>:<release>-rN, which pushes its alias
-          <release> too, unemu/firmware/ibm-pc/<id>:rN); empty: every open recipe. Published
-          ones are skipped; a selection including a private recipe is refused.
+          <release> too, unemu/firmware/ibm-pc/<id>:rN); empty: every open recipe
+          (recipes mode: every open and private recipe). Published
+          outputs are skipped; private paths are allowed only with mode=recipes.
         type: string
         required: false
         default: ""
+      mode:
+        description: >-
+          Artifacts to publish (both: outputs then recipes; outputs alone leaves
+          publication incomplete; private recipes require recipes alone)
+        type: choice
+        options: [outputs, recipes, both]
+        required: true
+        default: both
 
 permissions:
   contents: read
@@ -49,6 +60,7 @@ jobs:
       # Whether anything is left to push. The push job reads the selection
       # from the input itself.
       any: ${{ steps.built.outputs.any }}
+      outputs: ${{ steps.built.outputs.outputs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,6 +76,7 @@ jobs:
       - name: Read the selection
         env:
           SELECT: ${{ inputs.select }}
+          MODE: ${{ inputs.mode }}
         run: |
           case "$SELECT" in
             *[$'\n\r\t']*)
@@ -72,11 +85,15 @@ jobs:
               ;;
           esac
           read -ra words < <(printf '%s\n' "$SELECT")
+          # Both uses the open default in both jobs; only recipes alone may select private.
+          if [ "$MODE" = both ] && [ "${#words[@]}" -eq 0 ]; then
+            words=(recipes/media recipes/firmware)
+          fi
           : > "$RUNNER_TEMP/selection"
           for word in ${words[@]+"${words[@]}"}; do
             printf '%s\0' "$word" >> "$RUNNER_TEMP/selection"
           done
-          echo "selected: ${words[*]-} (empty: every open recipe)"
+          echo "selected: ${words[*]-} (empty: mode default)"
 
       # The action checks the release archive against its SHA256SUMS,
       # then runs unemu --version and checks commit:, not our archive pins.
@@ -89,6 +106,7 @@ jobs:
 
       # Published sets and packages are not built; drafts fail the run.
       - name: Build and check
+        if: inputs.mode != 'recipes'
         env:
           UNEMU: ${{ steps.unemu.outputs.path }}
           UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
@@ -107,22 +125,58 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
 
+      # Local guard only: in mode=both the output may still await this run's
+      # push. The push job enforces the anonymous output gate after outputs.
+      - name: Check recipe artifacts
+        if: inputs.mode != 'outputs'
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
+          UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
+        run: |
+          mapfile -d '' -t selectors < "$RUNNER_TEMP/selection"
+          status=0
+          python3 -I lib/publish.py --cli "$UNEMU" --recipes --guard-only \
+            --store "$RUNNER_TEMP/recipe-store" --report "$RUNNER_TEMP/recipes.json" \
+            -- ${selectors[@]+"${selectors[@]}"} > "$RUNNER_TEMP/recipes.txt" || status=$?
+          cat "$RUNNER_TEMP/recipes.txt"
+          {
+            echo "### Recipe guards (output gate runs after output publication)"
+            echo '```'
+            cat "$RUNNER_TEMP/recipes.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
       # The built store's OCI layout and its store.toml (not its download
       # cache), with the dry run's table: the push job pushes from it.
-      # Nothing to push when every selected one is published.
+      # Outputs alone: nothing to push when every selected one is published.
+      # Recipes still run, since text can change while the output stays pinned.
       - name: What to push
         id: built
+        env:
+          MODE: ${{ inputs.mode }}
         run: |
-          any="$(python3 -I -c 'import json, sys
+          any=false
+          outputs=false
+          if [ "$MODE" != recipes ]; then
+            outputs="$(python3 -I -c 'import json, sys
           rows = json.load(open(sys.argv[1]))
           print("true" if any(r["outcome"] == "dry run" for r in rows) else "false")' "$RUNNER_TEMP/report.json")"
-          echo "any=$any" >> "$GITHUB_OUTPUT"
-          echo "to push: $any"
-          if [ "$any" = true ]; then
-            mkdir -p handover/store
-            cp -R "$RUNNER_TEMP/store/images" "$RUNNER_TEMP/store/store.toml" handover/store/
-            cp "$RUNNER_TEMP/dry-run.txt" "$RUNNER_TEMP/report.json" handover/
+            any="$outputs"
+            if [ "$outputs" = true ]; then
+              mkdir -p handover/store
+              cp -R "$RUNNER_TEMP/store/images" "$RUNNER_TEMP/store/store.toml" handover/store/
+              cp "$RUNNER_TEMP/dry-run.txt" "$RUNNER_TEMP/report.json" handover/
+            fi
           fi
+          if [ "$MODE" != outputs ]; then
+            any=true
+            mkdir -p handover
+            cp "$RUNNER_TEMP/recipes.txt" "$RUNNER_TEMP/recipes.json" handover/
+          fi
+          echo "any=$any" >> "$GITHUB_OUTPUT"
+          echo "outputs=$outputs" >> "$GITHUB_OUTPUT"
+          echo "to push: $any (outputs: $outputs)"
 
       - name: Hand the store to the push job
         if: steps.built.outputs.any == 'true'
@@ -138,7 +192,7 @@ jobs:
   # Builds nothing; downloads unemu, its release's SHA256SUMS and the built
   # store: the credentials of this job never meet a build.
   push:
-    name: push to unemu/media/ and unemu/firmware/
+    name: push selected outputs and recipe artifacts
     needs: build
     if: github.ref == 'refs/heads/main' && needs.build.outputs.any == 'true'
     runs-on: ubuntu-latest
@@ -167,6 +221,7 @@ jobs:
           commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
 
       - name: Take the store of the build job
+        if: needs.build.outputs.outputs == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: store
@@ -177,6 +232,7 @@ jobs:
       - name: Read the selection
         env:
           SELECT: ${{ inputs.select }}
+          MODE: ${{ inputs.mode }}
         run: |
           case "$SELECT" in
             *[$'\n\r\t']*)
@@ -185,17 +241,22 @@ jobs:
               ;;
           esac
           read -ra words < <(printf '%s\n' "$SELECT")
+          # Both uses the open default in both jobs; only recipes alone may select private.
+          if [ "$MODE" = both ] && [ "${#words[@]}" -eq 0 ]; then
+            words=(recipes/media recipes/firmware)
+          fi
           : > "$RUNNER_TEMP/selection"
           for word in ${words[@]+"${words[@]}"}; do
             printf '%s\0' "$word" >> "$RUNNER_TEMP/selection"
           done
-          echo "selected: ${words[*]-} (empty: every open recipe)"
+          echo "selected: ${words[*]-} (empty: mode default)"
 
       # --no-build: every byte the push uploads is checked against the
       # recipe's pin and copied into a clean store of the run's own, the
       # only one unemu reads (lib/publish.py, take_from_store); unemu never
       # reads a file of the artifact, and a forged store can only fail.
       - name: Push to unemu/media/ and unemu/firmware/
+        if: needs.build.outputs.outputs == 'true'
         env:
           UNEMU: ${{ steps.unemu.outputs.path }}
           UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
@@ -212,6 +273,31 @@ jobs:
             echo "### Push"
             echo '```'
             cat "$RUNNER_TEMP/push.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      # Re-created from this checkout, never from the build artifact. Only
+      # this step receives credentials; the anonymous gate runs first and
+      # every successful push is pulled anonymously and compared bytewise.
+      - name: Push to unemu/recipes/
+        if: inputs.mode != 'outputs'
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
+          UNEMU_REGISTRY_HOST: ${{ vars.UNEMU_REGISTRY_HOST }}
+          UNEMU_REGISTRY_USER: ci-promote
+          UNEMU_REGISTRY_PASSWORD: ${{ secrets.UNEMU_PROMOTE_PASSWORD }}
+        run: |
+          mapfile -d '' -t selectors < "$RUNNER_TEMP/selection"
+          status=0
+          python3 -I lib/publish.py --cli "$UNEMU" --recipes --push \
+            --store "$RUNNER_TEMP/recipe-store" -- ${selectors[@]+"${selectors[@]}"} \
+            > "$RUNNER_TEMP/recipe-push.txt" || status=$?
+          cat "$RUNNER_TEMP/recipe-push.txt"
+          {
+            echo "### Recipe push and anonymous read-back"
+            echo '```'
+            cat "$RUNNER_TEMP/recipe-push.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"

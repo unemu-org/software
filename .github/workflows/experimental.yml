@@ -15,6 +15,9 @@
 
 name: experimental
 
+# No recipe push: the guard permits only the recipe's official revision
+# REF, refusing experimental paths, aliases and CI tags. Use publish.yml.
+
 on:
   push:
     branches: [main]

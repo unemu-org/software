@@ -4,14 +4,108 @@
 pinned unemu CLI, `unemu`, into a store, checks every set and package
 against its recipe's lock and digest, and pushes them to the registry only
 when asked. Without `--push` it is a dry run: it needs no credentials and
-writes to no registry, and it reads one only when `--skip-published` asks.
+writes to no registry. Output mode reads one only when `--skip-published`
+asks; recipe mode also reads the open output's revision tag.
 
 Private recipes in `recipes/private/` describe user-supplied titles only.
 Their outputs under `private/media/` or `private/firmware/` are never built,
 fetched, conformed or published by this pipeline, including experimental
-runs. The default selection skips them; any explicit file, ref or folder
+runs. Output mode's default selection skips them; any explicit file, ref or folder
 selection containing one is refused before unemu or a registry is called.
-Only `lib/recipes.py check` checks them statically, alongside open recipes.
+`lib/recipes.py check` checks them statically, alongside open recipes.
+Recipe mode can publish their public descriptions (see below).
+
+## Recipe artifacts
+
+Everything under `unemu/media/**` and `unemu/firmware/**` on the family
+registry is the output of a pinned recipe of this repository. Each output
+must have its recipe artifact under `unemu/recipes/...` with the same revision
+tag. An output without its published recipe is incomplete. Publication
+belongs to this repository; the unemu project pushes nothing to the family
+registry.
+
+The link is one-way: the recipe artifact names the output digest. The output
+cannot name its recipe because the recipe's lock contains the output digest.
+Lookup is by name: `unemu/media/X:tag` maps to `unemu/recipes/media/X:tag`,
+and firmware follows the same rule.
+
+The maintainer's decision of 2026-11-23 grants `ci-promote` write access to
+`unemu/recipes/**`. Recipe format 1.0 is frozen. Recipe artifacts publish
+only through the approved `publish` workflow; a recipe's first push needs
+the maintainer's approval of that run. The artifact contains the recipe,
+its work file, bundled texts and lock files, with no payload bytes.
+
+The REF is `unemu/recipes/` followed by the output's path after its first
+component, with the output's revision tag:
+
+| Output | Recipe artifact |
+| --- | --- |
+| `unemu/media/ibm-pc/kenslab:2.01-r1` | `unemu/recipes/media/ibm-pc/kenslab:2.01-r1` |
+| `unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1` | `unemu/recipes/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1` |
+| `private/media/ibm-pc/windows:3.1-r1` | `unemu/recipes/media/ibm-pc/windows:3.1-r1` |
+
+There is no experimental recipe publication: unemu's guard refuses every
+other place, including `unemu/experimental/recipes/`, release aliases and
+CI tags. Recipes of private outputs are public text under `unemu/recipes/`;
+their outputs under `private/` never leave the user's registries.
+
+```sh
+python3 -I lib/publish.py --cli UNEMU --recipes --report recipes.json
+python3 -I lib/publish.py --cli UNEMU --recipes --guard-only  # offline CI check
+```
+
+Recipe mode defaults to every open AND private recipe; file, folder and
+output REF selectors work as in output mode. The shared recipe loader rejects
+duplicate derived recipe REFs across all recipes under `recipes/`, before
+selection, including `--guard-only` and CI's static recipe check. It rejects output options
+`--fetch`, `--library`, `--no-build`, `--experimental` and `--skip-published`.
+`--store DIR` must name a fresh directory (otherwise a temporary store is
+used), initialized with `unemu library scan` of an empty folder. The CLI
+runs with a fresh HOME, `LC_ALL=C`, `TZ=UTC` and the run's public registry
+configuration; an explicit CA bundle can be supplied with `SSL_CERT_FILE`
+(also accepted from `NIX_SSL_CERT_FILE` or `CURL_CA_BUNDLE`). Recipe dry run
+constructs an HTTPS client and needs trusted CA roots, but sends no request.
+
+For each selection, `lib/recipes.py`'s static check must pass with no draft,
+finding, drift or missing `ok` line for the recipe and its work file.
+`unemu recipe push FILE REF --dry-run --store DIR` must report exactly the
+derived target on the configured host, the pinned output REF and digest,
+the recipe artifact digest and `guard:allowed`. For an open recipe, an
+anonymous registry read must then find exactly the pinned output digest at
+its revision tag; an absent output, another digest or a failed read refuses
+publication. Private recipes have no output gate: the static check and
+guard suffice, without looking for or fetching the title's files.
+
+`--guard-only` defers the open output gate so PR checks and the build job
+can check recipes before their outputs exist. Its outcome is `guard only`,
+and it cannot be combined with `--push`. A normal dry run includes the
+registry gate. Both print REF, recipe artifact digest, output digest, gate
+state and outcome, also available with `--report FILE` as JSON. The JSON
+retains the output `ref`, and adds `target`, `recipe_digest`, `output_digest`
+and `gate`. Nothing is pushed if any selected recipe fails.
+
+In the approved push step, `--recipes --push` repeats these checks and
+runs `unemu recipe push FILE REF --store DIR`. Its last line must be
+`pushed\tTARGET\tIMAGE_DIGEST`, `unchanged\tTARGET\tIMAGE_DIGEST`, or
+`moved\tTARGET\tFROM -> IMAGE_DIGEST (the same output OUTPUT_DIGEST)`
+(with literal tabs). `TARGET` is the host-qualified reference from the dry
+run's `target:` line. The `moved` form must explicitly name the same pinned
+output digest and expected recipe artifact digest. A recipe tag can move
+only between recipes of that same output digest; another output digest is
+refused by unemu. The pipeline checks the reported target and digests too.
+Credentials come only from the environment and reach only the push call.
+The shared CLI runner replaces non-empty registry password and user values
+with `***` in captured stdout and stderr before either push path can relay
+them to logs, errors or summaries.
+
+After every successful push, including unchanged and moved outcomes,
+`unemu recipe pull REF --to DIR` runs anonymously into a fresh folder. Its
+reported digest must match the dry-run artifact. Every file must have the
+same bytes as its repository counterpart relative to the recipe's folder:
+recipe, work file, bundled texts and lock files. A missing, differing or
+extra file, or a symlink, fails confirmation (`unconfirmed`) and stops later
+pushes. Recipe artifacts are rebuilt from the push job's checkout; no
+recipe store or recipe bytes from the build hand-over are trusted.
 
 ## The pinned unemu
 
@@ -290,6 +384,10 @@ read -rs UNEMU_REGISTRY_PASSWORD && export UNEMU_REGISTRY_PASSWORD
 python3 -I lib/publish.py --cli out/unemu/unemu --fetch --push recipes/media/freedos
 ```
 
+This command publishes outputs only; publication remains incomplete until
+their recipe artifacts follow through the approved workflow. The workflow's
+default `mode=both` handles both in one approved run.
+
 What keeps a push safe:
 
 - **Credentials.** They come only from the environment
@@ -425,7 +523,9 @@ has a concurrency group of its own commit.
 2. **recipes**, on the runner's own Python: `setup-unemu`;
    `lib/recipes.py check`, over every recipe including private ones, which fails on a finding, on
    drift, on a draft and when unemu prints no `ok` line for a recipe or a
-   work file a recipe names; then for the selected open recipes the dry run with
+   work file a recipe names; `--recipes --guard-only` over every open and
+   private recipe (all guards must allow the derived REF, no registry read);
+   then for the selected open recipes the output dry run with
    `--fetch` into a fresh store (each built against its lock, shown,
    guard-checked and compared with its pin; the table goes to the job
    summary), and `unemu recipe conformance` over them in a second scratch
@@ -481,29 +581,45 @@ run waits for the one before it. No Nix. Two jobs:
 
 ### publish.yml: publication, approved by the maintainer
 
-By hand only (`workflow_dispatch`), from `main`. Its input `select` takes
-recipe files, folders and refs separated by spaces; empty means every
-open recipe, and a selection containing a private recipe is refused;
-a newline, carriage return or tab in it is refused. One run at a
-time, in a concurrency group of its own. Two jobs, as above:
+By hand only (`workflow_dispatch`), from `main`, one run at a time. The
+`mode` input defaults to `both`: outputs first, then their recipes, in one
+approved run. Explicit `outputs` mode is an exception that leaves publication
+incomplete until the recipes follow. `recipes` mode supports recipe-only
+updates and private recipes. `select`
+takes recipe files, folders and output refs separated by spaces; a newline,
+carriage return or tab is refused. Empty selection means every open recipe
+for `outputs` or `both`, and every open and private recipe for `recipes`.
+Private paths are allowed only in `recipes` mode: in `both`, the output
+pipeline refuses them before any build. This keeps one approval and one
+selection for a combined publication, with no way to build a private output.
 
-1. **build**, without an environment or a secret: `setup-unemu`, then `lib/publish.py
-   --skip-published --fetch SELECT...`, the dry run, which builds only what
-   is not on `unemu/media/` or `unemu/firmware/` yet. Its table is in the
-   run's summary before anything is approved. The built store goes to the
-   push job as an artifact kept for 7 days.
-2. **push**, in the protected environment `media`, which waits for the
-   maintainer's approval: on a fresh runner, as above, one step with the
-   credentials of `ci-promote` (write on `unemu/media/**` and
-   `unemu/firmware/**`) that checks every byte of the store against the
-   pins and pushes it, `--skip-published --no-build --store handover/store
-   --push`. It reads `select` from the run's input itself, with the same
-   refusal, never from the build job's outputs (an empty selection would
-   mean every open recipe).
+1. **build**, without an environment or a secret: `setup-unemu`, then for
+   outputs the existing `--skip-published --fetch` dry run and checked-store
+   hand-over. For recipes it runs `--recipes --guard-only` with a fresh
+   store: outputs can still await this run's push, so this checks all static
+   rules and guards and clearly defers the registry gate. Both tables go to
+   the run summary before approval. Only the output OCI store and reports
+   are handed over, kept for 7 days. A recipe-only run hands over reports
+   alone; a combined run still proceeds when all outputs are published.
+   Separate `any` and `outputs` flags distinguish recipe work from pending
+   outputs; no store files are fabricated when no outputs need pushing.
+2. **push**, in the protected environment `media`, waits for the
+   maintainer's approval. A fresh runner checks out the same commit and
+   installs unemu afresh. It re-reads `select` and `mode` from the run inputs,
+   never from build outputs. The handed-over store is downloaded only when
+   the build's `outputs` flag is true; only then does the output push run.
+   Outputs go first, with the existing
+   `--skip-published --no-build --store handover/store --push` checks.
+   Then recipes use `--recipes --push` in a fresh store, enforcing the
+   anonymous open-output gate and exact anonymous pull read-back described
+   above. Each push step alone receives `ci-promote` credentials through
+   its environment (write on `unemu/media/**`, `unemu/firmware/**` and
+   `unemu/recipes/**`); build and read-back commands receive none.
 
-The maintainer approves the push job within 7 days, while the artifact is
-kept; after that the push job fails for want of it, and the remedy is to
-re-run the whole run (or start a new one), which builds again.
+When outputs need pushing, the maintainer approves the push job within
+7 days, while the store artifact is kept; after that its download fails,
+and the remedy is to re-run the whole run (or start a new one), which
+builds again. Recipe pushes use the checkout and require no artifact download.
 
 **Decision of the maintainer (2026-11-17): no promotion from
 `unemu/experimental/`.** The publish workflow rebuilds only the sets and
@@ -536,15 +652,18 @@ publish.yml, which takes every open recipe by default.
   secret `UNEMU_EXPERIMENTAL_PASSWORD` of the account `ci-experimental`;
   the protected environment `media` (deployment branch `main`, the
   maintainer as required reviewer) holds `UNEMU_PROMOTE_PASSWORD` of the
-  account `ci-promote`. The account names are written in the workflows.
-- Only the push jobs name an environment, and only their push step maps the
+  account `ci-promote`, with write access to `unemu/media/**`,
+  `unemu/firmware/**` and `unemu/recipes/**`. The account names are written
+  in the workflows.
+- Only the push jobs name an environment, and only their push steps map the
   account and secret into `UNEMU_REGISTRY_USER` and
   `UNEMU_REGISTRY_PASSWORD`, next to `UNEMU_REGISTRY_HOST` from the
   repository variable of that name. GitHub hands a job's secrets to its
   runner when the job starts, so a step's environment is no boundary
   within a job: the boundary is the job. No job that refers to a secret
-  builds anything or downloads anything but unemu, its release's
-  `SHA256SUMS` and the build job's artifact. `setup-unemu` checks the archive
+  builds an output or downloads its inputs. It downloads unemu, its release's
+  `SHA256SUMS`, the build job's artifact and, for recipe read-back, public
+  recipe text artifacts. `setup-unemu` checks the archive
   against those sums and the commit line against the pinned commit; the
   build jobs, which download and build, have no environment and no secret.
 - No job runs code of a recipe, which holds none: the recipes are data
@@ -581,9 +700,11 @@ GitHub-hosted runners use public DNS.
 place, an experimental one neither. Recipe format **1.0 is frozen**
 (unemupc decision-43); its schema is the
 [recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
-Publishing recipe artifacts requires the maintainer's later decision and
-an account that may write `unemu/recipes/**`. No recipe push step is added
-by this migration; the workflows push open sets and packages only.
+Recipes publish through the maintainer-approved `publish` workflow after
+their open outputs; private recipes publish public text without an output
+gate. Each recipe's first push needs approval of that run. `ci-promote`
+may write `unemu/recipes/**` (2026-11-23). See [Recipe artifacts](#recipe-artifacts)
+for the mapping, gates and anonymous byte-for-byte read-back.
 
 ## Gaps of unemu 0.0.4 that shape this pipeline
 

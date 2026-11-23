@@ -51,3 +51,24 @@ Labels: kind (`game`, `operating-system`, `application`, `utility`,
 `shareware`, `public-domain`), plus a few genre words. The description is
 factual: what the title is, what the disks hold, how to install it, the
 distribution terms in one sentence.
+
+## Recipe artifact publication
+
+Publish through the `publish` workflow with its default `mode=both`:
+outputs first, then their recipe artifacts, in one approved run. Every
+output under `unemu/media/**` must come from a pinned recipe of this
+repository and have its recipe artifact under
+`unemu/recipes/media/ibm-pc/<work>:<release>-rN` at the same revision
+tag. An output without its published recipe is incomplete. Explicit
+`mode=outputs` leaves it incomplete until the recipe follows;
+`mode=recipes` supports recipe-only updates after the output's revision
+tag serves its pinned digest. The recipe artifact names the output
+digest; lookup is by name, with no reverse link from the output because
+the recipe's lock contains that output digest. The unemu project pushes
+nothing to the family registry; publication belongs to this repository.
+The maintainer runs and approves the push job, including the first
+push of each recipe; `ci-promote` may write `unemu/recipes/**` (2026-11-23).
+The pipeline enforces the strict static check, exact guard plan and anonymous
+output gate, then anonymously pulls every pushed recipe and compares all
+files and bytes with the repository. No experimental recipe publication or
+alias is allowed. See SKILL.md §5 and `docs/publishing.md`.

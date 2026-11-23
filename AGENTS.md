@@ -23,6 +23,9 @@ and no input URLs. Their outputs are named under `private/media/ibm-pc/<work>` o
 `private/firmware/ibm-pc/<id>`. Only the descriptions and locks live here, never
 the title's files; users build from their own libraries. These recipes receive
 static checks only: the repository never builds, fetches or publishes their outputs.
+Their recipe text artifacts are public under `unemu/recipes/`; only the
+maintainer-approved publish workflow pushes them. Open recipes publish after
+their outputs, and each recipe's first push needs approval of that run.
 
 ## Language
 
@@ -80,6 +83,15 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
 - **Publication rule**: write as if public; no private hosts, paths or personal
   setup; never create or publish a repository, which is the maintainer's step.
   Pushing sets to the registry is the maintainer's step unless granted for a session.
+- **Every output has a published recipe**: everything under `unemu/media/**` and
+  `unemu/firmware/**` on the family registry is the output of a pinned recipe of
+  this repository. Each output has its recipe artifact under `unemu/recipes/...`
+  with the same revision tag; an output without its published recipe is incomplete.
+  The link is one-way: the recipe artifact names the output digest. The output
+  cannot name its recipe because the recipe's lock contains the output digest.
+  Lookup is by name: `unemu/media/X:tag` maps to `unemu/recipes/media/X:tag`
+  (likewise for firmware). Publication belongs to this repository; the unemu
+  project pushes nothing to the family registry.
 
 ## Quick loop
 
