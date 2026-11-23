@@ -1,0 +1,15 @@
+# Metadata: https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/listing.csv
+# and APPINFO/FIND.LSM of ZIP sha256:75dd5bf90821b9ecff67fad36d9da342e48bfb1073e1835e53c9bf560ac5099c.
+# Title/Author supply title/developers; synopsis paraphrases Description/Summary.
+# utility/application/development and open-source are our classifications.
+recipe = "1.0"
+
+[work]
+id = "freedos-find"
+
+[title]
+title = "find"
+developers = ["Jim Hall"]
+software_platform = "DOS"
+labels = ["utility", "open-source", "freedos"]
+synopsis = "Searches text files for lines containing a given string."

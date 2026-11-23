@@ -28,8 +28,10 @@ does.
 
 - **Open source**: an SPDX expression naming every licence actually present
   (`GPL-2.0-only AND MIT AND ...`), one entry per program in the licence
-  index. Packages whose licence cannot be verified keep the whole set
-  unpublished.
+  index. A licence doubt may be published only when the index records what
+  is unclear, the evidence, and why the licence is taken as stated. Missing
+  licences and incomplete corresponding source for copyleft content prevent
+  publication. Anything is taken down at a rights holder's request.
 - **Freeware/shareware under its own terms**: `LicenseRef-<Name>` with
   `terms` pointing at the extra carrying the vendor's terms text,
   unmodified (`README.TXT`, `VENDOR.DOC`, `ORDER.FRM`, ...). The terms must

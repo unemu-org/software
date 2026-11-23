@@ -112,7 +112,11 @@ How our recipes use the steps:
   sector, which reports a non-system disk and retries the boot.
 - **The licence index.** `licenses.txt`, our own CC0-1.0 text, is a
   bundled input; a `text` step gives it DOS line ends, and the extra
-  `LICENSES.TXT` carries it.
+  `LICENSES.TXT` carries it. Licence doubts may be published only when
+  the index records what is unclear, the evidence, and why the licence is
+  taken as stated. Missing licences and incomplete corresponding source for
+  copyleft content prevent publication. Anything is taken down at a rights
+  holder's request.
 
 ## Work files
 

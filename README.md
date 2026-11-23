@@ -26,7 +26,9 @@ their outputs. Their recipe text artifacts are public under `unemu/recipes/`.
   at the same revision tag. An output without its published recipe is incomplete.
 - **Open only when every part is covered.** Real SPDX licences, a licence
   index for every program of a set, and the corresponding source of
-  copyleft content; when in doubt, nothing is published.
+  copyleft content. Licence doubts must record the uncertainty, evidence and
+  interpretation in the index. Missing licences or incomplete copyleft source
+  prevent publication; anything is taken down at a rights holder's request.
 - **Reproducible.** The same recipe gives the same bytes and digests on
   every run and host.
 - **An output revision tag never moves.** A published `rN` tag (`freedos:1.4-r1`,

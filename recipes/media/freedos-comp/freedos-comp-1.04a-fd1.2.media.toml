@@ -1,0 +1,83 @@
+# Official FreeDOS package; byte-identical ZIP in repository releases: 1.2, 1.3.
+# Input size and SHA-256 verified against unemu recipe scaffold; listing CRC checked.
+# Metadata: listing.csv at each input release root and APPINFO/COMP.LSM.
+# Licence evidence, exact file/line spans and full texts: licenses.txt.
+# Release normalization: 1.04a -> 1.04a-fd1.2; lowercase and non-tag runs to '-'.
+# Same-version distinct ZIPs use -fd plus the repository release of first appearance.
+# The file-set places the intact ZIP under an uppercase 8.3 DOS filename.
+# File inputs in FAT steps await recipe 1.1, ufe-uym.9.11 (unemu); floppy bytes stay identical.
+recipe = "1.0"
+work = "freedos-comp"
+
+[media]
+name = "unemu/media/ibm-pc/freedos-comp"
+platform = "ibm-pc"
+release = "1.04a-fd1.2"
+revision = 1
+digest = "sha256:b7b991ad7790102ff10b2d4ee12aaf98878e5e21173824d92e8b629fbe210278"
+
+[title]
+version = "1.04a"
+labels = ["base"]
+description = "Compares files and reports differences between their contents. One 1.44M floppy holds the complete official FreeDOS package ZIP, unmodified, as COMP.ZIP. Copy the ZIP to a hard disk or use it with FreeDOS FDINST/FDIMPLES to install. LICENSES.TXT records the licences and source-header evidence. The identical package ZIP is attached as SOURCE.ZIP with its SOURCE/ tree. Distributed under MIT."
+
+[license]
+expression = "MIT"
+terms = "licenses"
+source = "source"
+
+# The source extra is the intact official package ZIP.
+[input.zip]
+name = "comp.zip"
+size = 15865
+sha256 = "b6e6ad5e0005d21b53fc77246f2b8ebda9c0f37f66e7035576c9ee2854831ee1"
+urls = ["https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.2/base/comp.zip", "https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.3/base/comp.zip"]
+
+# The same bytes under their 8.3 name for recipe 1.0's FAT operand.
+[input.package]
+name = "package"
+files = [{ path = "COMP.ZIP", size = 15865, sha256 = "b6e6ad5e0005d21b53fc77246f2b8ebda9c0f37f66e7035576c9ee2854831ee1" }]
+
+# Our index prose and quoted licence documents; no program or data member bundled.
+[input.licenses-lf]
+name = "licenses.txt"
+size = 16358
+sha256 = "a8412f3d76835c44235e05d9b0ef1220e8350ed1baf3b8c8cfec193cf9789846"
+bundle = true
+
+# Fixed, recipe-owned FAT metadata; the package ZIP itself is unmodified.
+[[step]]
+id = "disk"
+fat = "package"
+format = "1.44M"
+label = "FD-COMP"
+serial = 0x19800101
+order = "listed"
+time = 1980-01-01T00:00:00
+
+[[step]]
+id = "licenses"
+text = "licenses-lf"
+eol = "crlf"
+
+[[medium]]
+id = "disk-1"
+label = "Disk 1 of 1 - comp 1.04a package ZIP"
+format = "1.44M"
+file_name = "COMP.IMG"
+from = "disk"
+
+[[extra]]
+id = "licenses"
+file_name = "LICENSES.TXT"
+dos_name = "LICENSES.TXT"
+kind = "document"
+from = "licenses"
+
+# Exactly the same ZIP as on the floppy, with its corresponding SOURCE/ tree.
+[[extra]]
+id = "source"
+file_name = "freedos-comp-1.04a-fd1.2-source.zip"
+dos_name = "SOURCE.ZIP"
+kind = "archive"
+from = "zip"

@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - label 1.5 package ZIP"
+blob = "sha256:9ff9c0bd2c504a86ce4e6433d9a5746c69bd276eeeef9d8351bbace0d65a1093"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:123545e2e38416b61a44c8263a51bc3830a2a9480a3aab87cf4f04764be274ba"
+filename = "LICENSES.TXT"
+size = 69083
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:1c91a8216c61fba449f4ee1b8aa9a0d064d1c52df52b0b85832cf5bd572271f4"
+filename = "freedos-label-1.5-fd1.4-source.zip"
+size = 84039
+kind = "archive"
+dos_name = "SOURCE.ZIP"

@@ -1,0 +1,15 @@
+# Metadata: https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/latest/listing.csv
+# and APPINFO/LABEL.LSM of ZIP sha256:53ae3ceac741089cf40d9ba32eca1fed7457420152822d7c92c8e344f0d228d7.
+# Title/Author supply title/developers; synopsis paraphrases Description/Summary.
+# utility/application/development and open-source are our classifications.
+recipe = "1.0"
+
+[work]
+id = "freedos-label"
+
+[title]
+title = "LABEL"
+developers = ["Joe Cosentino"]
+software_platform = "DOS"
+labels = ["utility", "open-source", "freedos"]
+synopsis = "Sets or changes a disk volume label."

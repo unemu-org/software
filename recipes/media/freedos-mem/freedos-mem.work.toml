@@ -1,0 +1,15 @@
+# Metadata: https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/latest/listing.csv
+# and APPINFO/MEM.LSM of ZIP sha256:e7829f62be4fc35c668aa023931e77701f3b4112493894cdc15aae91db8f672f.
+# Title/Author supply title/developers; synopsis paraphrases Description/Summary.
+# utility/application/development and open-source are our classifications.
+recipe = "1.0"
+
+[work]
+id = "freedos-mem"
+
+[title]
+title = "MEM"
+developers = ["Joe Cosentino"]
+software_platform = "DOS"
+labels = ["utility", "open-source", "freedos"]
+synopsis = "Reports used and available DOS memory."

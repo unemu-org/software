@@ -1,0 +1,83 @@
+# Official FreeDOS package; byte-identical ZIP in repository releases: 1.1.
+# Input size and SHA-256 verified against unemu recipe scaffold; listing CRC checked.
+# Metadata: listing.csv at each input release root and appinfo/append.lsm.
+# Licence evidence, exact file/line spans and full texts: licenses.txt.
+# Release normalization: 5.0-0.6 -> 5.0-0.6; lowercase and non-tag runs to '-'.
+# Same-version distinct ZIPs use -fd plus the repository release of first appearance.
+# The file-set places the intact ZIP under an uppercase 8.3 DOS filename.
+# File inputs in FAT steps await recipe 1.1, ufe-uym.9.11 (unemu); floppy bytes stay identical.
+recipe = "1.0"
+work = "freedos-append"
+
+[media]
+name = "unemu/media/ibm-pc/freedos-append"
+platform = "ibm-pc"
+release = "5.0-0.6"
+revision = 1
+digest = "sha256:b793edeaf1710ba8152377d8166281c3f92434531db3fed37c9be510faac1f54"
+
+[title]
+version = "5.0-0.6"
+labels = ["base"]
+description = "Makes data files in selected directories accessible as if they were in the current directory. One 1.44M floppy holds the complete official FreeDOS package ZIP, unmodified, as APPEND.ZIP. Copy the ZIP to a hard disk or use it with FreeDOS FDINST/FDIMPLES to install. LICENSES.TXT records the licences and source-header evidence. The identical package ZIP is attached as SOURCE.ZIP with its SOURCE/ tree. Distributed under GPL-2.0-or-later."
+
+[license]
+expression = "GPL-2.0-or-later"
+terms = "licenses"
+source = "source"
+
+# The source extra is the intact official package ZIP.
+[input.zip]
+name = "append.zip"
+size = 35897
+sha256 = "efa42a2d66fa5db0a12ecb8f0548cf9e4a79d8f6aa55c520f6f439d74c6f0476"
+urls = ["https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.1/base/append.zip"]
+
+# The same bytes under their 8.3 name for recipe 1.0's FAT operand.
+[input.package]
+name = "package"
+files = [{ path = "APPEND.ZIP", size = 35897, sha256 = "efa42a2d66fa5db0a12ecb8f0548cf9e4a79d8f6aa55c520f6f439d74c6f0476" }]
+
+# Our index prose and quoted licence documents; no program or data member bundled.
+[input.licenses-lf]
+name = "licenses.txt"
+size = 46828
+sha256 = "17cc66e7d2f09d4f8206f5b0c03c35082f2938166367ba34827c8b78ad2767eb"
+bundle = true
+
+# Fixed, recipe-owned FAT metadata; the package ZIP itself is unmodified.
+[[step]]
+id = "disk"
+fat = "package"
+format = "1.44M"
+label = "FD-APPEND"
+serial = 0x19800101
+order = "listed"
+time = 1980-01-01T00:00:00
+
+[[step]]
+id = "licenses"
+text = "licenses-lf"
+eol = "crlf"
+
+[[medium]]
+id = "disk-1"
+label = "Disk 1 of 1 - append 5.0-0.6 package ZIP"
+format = "1.44M"
+file_name = "APPEND.IMG"
+from = "disk"
+
+[[extra]]
+id = "licenses"
+file_name = "LICENSES.TXT"
+dos_name = "LICENSES.TXT"
+kind = "document"
+from = "licenses"
+
+# Exactly the same ZIP as on the floppy, with its corresponding SOURCE/ tree.
+[[extra]]
+id = "source"
+file_name = "freedos-append-5.0-0.6-source.zip"
+dos_name = "SOURCE.ZIP"
+kind = "archive"
+from = "zip"

@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - find 3.0b LFN package ZIP"
+blob = "sha256:ceb5d74ab453d133fb9c3dc11948791bdb6189cd984f0d8630e5b5ad44bbb2f7"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:9b5bc28cc321452ac242ad4166d72439b0e245635a53cb284133eb329685b748"
+filename = "LICENSES.TXT"
+size = 94143
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:75dd5bf90821b9ecff67fad36d9da342e48bfb1073e1835e53c9bf560ac5099c"
+filename = "freedos-find-3.0b-lfn-source.zip"
+size = 102855
+kind = "archive"
+dos_name = "SOURCE.ZIP"

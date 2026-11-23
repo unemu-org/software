@@ -1,0 +1,83 @@
+# Official FreeDOS package; byte-identical ZIP in repository releases: 1.2, 1.3.
+# Input size and SHA-256 verified against unemu recipe scaffold; listing CRC checked.
+# Metadata: listing.csv at each input release root and APPINFO/FIND.LSM.
+# Licence evidence, exact file/line spans and full texts: licenses.txt.
+# Release normalization: 3.0b LFN (rev A) -> 3.0b-lfn-rev-a; lowercase and non-tag runs to '-'.
+# Same-version distinct ZIPs use -fd plus the repository release of first appearance.
+# The file-set places the intact ZIP under an uppercase 8.3 DOS filename.
+# File inputs in FAT steps await recipe 1.1, ufe-uym.9.11 (unemu); floppy bytes stay identical.
+recipe = "1.0"
+work = "freedos-find"
+
+[media]
+name = "unemu/media/ibm-pc/freedos-find"
+platform = "ibm-pc"
+release = "3.0b-lfn-rev-a"
+revision = 1
+digest = "sha256:0d572bb0ed3527cb7834b4df06b8de2528ce522b654a1adf58e8e75c8633f637"
+
+[title]
+version = "3.0b LFN (rev A)"
+labels = ["base"]
+description = "Searches text files for lines containing a given string. One 1.44M floppy holds the complete official FreeDOS package ZIP, unmodified, as FIND.ZIP. Copy the ZIP to a hard disk or use it with FreeDOS FDINST/FDIMPLES to install. LICENSES.TXT records the licences and source-header evidence. The identical package ZIP is attached as SOURCE.ZIP with its SOURCE/ tree. Distributed under GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.1-or-later."
+
+[license]
+expression = "GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.1-or-later"
+terms = "licenses"
+source = "source"
+
+# The source extra is the intact official package ZIP.
+[input.zip]
+name = "find.zip"
+size = 100835
+sha256 = "0cefc8f61bcaf2fdf1ecaac8c991adef3dc958cb6966b0ad5be1519079d96f9c"
+urls = ["https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.2/base/find.zip", "https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.3/base/find.zip"]
+
+# The same bytes under their 8.3 name for recipe 1.0's FAT operand.
+[input.package]
+name = "package"
+files = [{ path = "FIND.ZIP", size = 100835, sha256 = "0cefc8f61bcaf2fdf1ecaac8c991adef3dc958cb6966b0ad5be1519079d96f9c" }]
+
+# Our index prose and quoted licence documents; no program or data member bundled.
+[input.licenses-lf]
+name = "licenses.txt"
+size = 92390
+sha256 = "7e64c548c822860ec2b637386f517790d4579aaceb44a1b921e2ad7fbed46b44"
+bundle = true
+
+# Fixed, recipe-owned FAT metadata; the package ZIP itself is unmodified.
+[[step]]
+id = "disk"
+fat = "package"
+format = "1.44M"
+label = "FD-FIND"
+serial = 0x19800101
+order = "listed"
+time = 1980-01-01T00:00:00
+
+[[step]]
+id = "licenses"
+text = "licenses-lf"
+eol = "crlf"
+
+[[medium]]
+id = "disk-1"
+label = "Disk 1 of 1 - find 3.0b LFN (rev A) package ZIP"
+format = "1.44M"
+file_name = "FIND.IMG"
+from = "disk"
+
+[[extra]]
+id = "licenses"
+file_name = "LICENSES.TXT"
+dos_name = "LICENSES.TXT"
+kind = "document"
+from = "licenses"
+
+# Exactly the same ZIP as on the floppy, with its corresponding SOURCE/ tree.
+[[extra]]
+id = "source"
+file_name = "freedos-find-3.0b-lfn-rev-a-source.zip"
+dos_name = "SOURCE.ZIP"
+kind = "archive"
+from = "zip"

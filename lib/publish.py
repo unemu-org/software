@@ -170,6 +170,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -597,14 +598,85 @@ def check_recipes(cli, root, every, env):
     log(last_line(done.stdout))
 
 
+@dataclasses.dataclass(frozen=True)
+class Download:
+    """The file identity used by lib/unemu.py's checked download helpers."""
+
+    file: str
+    size: int
+    sha256: str
+
+
+def prefetch_inputs(inputs, libraries, env):
+    """Put missing URL inputs in the first library, under their SHA-256.
+
+    Reuse the release downloader's HTTPS-only redirects, size limit, hash
+    check and atomic write. No downloaded member is extracted or executed.
+    """
+    for key, value in inputs.items():
+        urls = value.get("urls", [])
+        if not urls or value.get("bundle"):
+            continue
+        size, digest = value.get("size"), value.get("sha256")
+        if (type(size) is not int or size < 0 or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            raise Failure(f"input {key}: URL input needs a pinned file size and SHA-256")
+        pin = Download(digest, size, digest)
+        present = False
+        for library in libraries:
+            for path in pathlib.Path(library).rglob("*"):
+                if path.is_symlink() or not path.is_file() or path.stat().st_size != size:
+                    continue
+                try:
+                    unemu.read_checked(path, pin)
+                except unemu.Refusal:
+                    continue
+                present = True
+                break
+            if present:
+                break
+        if present:
+            continue
+        errors = []
+        for url in urls:
+            parsed = urllib.parse.urlsplit(url)
+            if (parsed.scheme != "https" or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None):
+                raise Failure(f"input {key}: only anonymous HTTPS download URLs are allowed")
+        for url in urls:
+            try:
+                log(f"download input {key}: {url}")
+                data = unemu.download(url, pin, env, unemu.RELEASES)
+                unemu.store(data, str(pathlib.Path(libraries[0]) / digest))
+                break
+            except unemu.Refusal as error:
+                errors.append(str(error))
+        else:
+            raise Failure(f"input {key}: " + "; ".join(errors))
+
+
 def build_item(cli, root, item, store, options, env):
     """`unemu recipe build` of the item's recipe into STORE; its digest and
     whether the recipe is locked (pinned) or a draft. Its report goes to
     stderr."""
     args = ["recipe", "build", str(root / item.recipe.path), "--store", str(store)]
-    if options.fetch:
+    libraries = list(options.library)
+    fetch = options.fetch
+    if fetch:
+        with (root / item.recipe.path).open("rb") as handle:
+            inputs = tomllib.load(handle).get("input", {})
+        # Remove after ufe-uym.9.10 (unemu): 0.0.4 refuses all fetches if
+        # any external input has no URL. Bundled inputs already live here.
+        if any(not value.get("urls") and not value.get("bundle") for value in inputs.values()):
+            if not libraries:
+                library = pathlib.Path(env["HOME"]).parent / "inputs"
+                library.mkdir(exist_ok=True)
+                libraries.append(str(library))
+            prefetch_inputs(inputs, libraries, env)
+            fetch = False
+    if fetch:
         args.append("--fetch")
-    for library in options.library:
+    for library in libraries:
         args += ["--library", library]
     done = run_cli(cli, args, env)
     sys.stderr.write(done.stdout + done.stderr)

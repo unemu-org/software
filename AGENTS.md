@@ -63,7 +63,11 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
   stated licence are not attached. A firmware package is one program: it is open
   with an SPDX statement equal to the licence unemupc's firmware catalogue records
   for its ROM and, for copyleft firmware, its corresponding source archive attached.
-  When in doubt, the set or package is not published.
+  A licence doubt may be published only when the set's licence index records
+  what is unclear, the evidence, and why the licence is taken as stated.
+  Anything is taken down at a rights holder's request. Copyleft content without
+  its complete corresponding source is never published, nor is content whose
+  licence is missing altogether.
 - **Only authorised sources**: an input's URL points only to a source that
   distributes those bytes with the rights holder's permission: the author's or
   publisher's own site or release, an official mirror, an archive the rights holder

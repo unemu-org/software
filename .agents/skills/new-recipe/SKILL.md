@@ -15,8 +15,12 @@ this skill is the procedure, they are the rules.
 
 ## 1. Decide whether it may exist at all
 
-Answer these before writing a byte. If one answer is "no" or "unsure", stop
-and ask the maintainer; record the question in the bead.
+Answer these before writing a byte. A licence doubt may proceed only when
+its licence index records what is unclear, the evidence, and why the
+licence is taken as stated. Missing licences and incomplete corresponding
+source for copyleft content always prevent publication. Anything is taken
+down at a rights holder's request. For other unresolved questions, ask the
+maintainer and record the question in the bead.
 
 1. **Who holds the rights, and what did they allow?** Find the rights
    holder's own statement: for open inputs, a licence file in the release;
@@ -42,7 +46,9 @@ and ask the maintainer; record the question in the bead.
    A private recipe names no URL at all.
 4. **Does it fit the open rule?** Every program in the set is covered by a
    stated licence; copyleft content brings its corresponding source;
-   documents without a stated licence are left out.
+   documents without a stated licence are left out. Record any licence doubt,
+   its evidence and the reason for taking the licence as stated in the index;
+   never publish content with no licence or incomplete copyleft source.
 
 ## 2. Bead and branch
 

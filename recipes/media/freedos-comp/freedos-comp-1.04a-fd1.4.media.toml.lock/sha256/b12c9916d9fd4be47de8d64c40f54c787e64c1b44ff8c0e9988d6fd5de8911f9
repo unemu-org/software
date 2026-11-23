@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - comp 1.04a package ZIP"
+blob = "sha256:79b0eea9e3759ce76b1dce13f0fc8646b58a4b35e3990082294759ce0aaae552"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:11da8017d63195c32011d24f330b5f481680a653080c33775eadf407dec99191"
+filename = "LICENSES.TXT"
+size = 16660
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:937035db6aa77f5ed412cc9fd6b0ab6309e639d67f475c05928f08dc910dd9e5"
+filename = "freedos-comp-1.04a-fd1.4-source.zip"
+size = 14743
+kind = "archive"
+dos_name = "SOURCE.ZIP"

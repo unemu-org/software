@@ -1,0 +1,83 @@
+# Official FreeDOS package; byte-identical ZIP in repository releases: 1.4, latest.
+# Input size and SHA-256 verified against unemu recipe scaffold; listing CRC checked.
+# Metadata: listing.csv at each input release root and APPINFO/TREE.LSM.
+# Licence evidence, exact file/line spans and full texts: licenses.txt.
+# Release normalization: 3.7.3 -> 3.7.3; lowercase and non-tag runs to '-'.
+# Same-version distinct ZIPs use -fd plus the repository release of first appearance.
+# The file-set places the intact ZIP under an uppercase 8.3 DOS filename.
+# File inputs in FAT steps await recipe 1.1, ufe-uym.9.11 (unemu); floppy bytes stay identical.
+recipe = "1.0"
+work = "freedos-tree"
+
+[media]
+name = "unemu/media/ibm-pc/freedos-tree"
+platform = "ibm-pc"
+release = "3.7.3"
+revision = 1
+digest = "sha256:628d5c2323697f1878aceddfd41cadcb16aa63e4ac1af46a44e8c820ab1d3d9f"
+
+[title]
+version = "3.7.3"
+labels = ["base"]
+description = "Displays the directory structure of a drive or path. One 1.44M floppy holds the complete official FreeDOS package ZIP, unmodified, as TREE.ZIP. Copy the ZIP to a hard disk or use it with FreeDOS FDINST/FDIMPLES to install. LICENSES.TXT records the licences and source-header evidence. The identical package ZIP is attached as SOURCE.ZIP with its SOURCE/ tree. Distributed under GPL-2.0-only AND LGPL-2.1-or-later AND LicenseRef-findfile-PD."
+
+[license]
+expression = "GPL-2.0-only AND LGPL-2.1-or-later AND LicenseRef-findfile-PD"
+terms = "licenses"
+source = "source"
+
+# The source extra is the intact official package ZIP.
+[input.zip]
+name = "tree.zip"
+size = 110184
+sha256 = "a3d11398d116654df293eccf6fbbcf543c799bced21f8045056a28cecccfa10b"
+urls = ["https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/base/tree.zip", "https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/latest/base/tree.zip"]
+
+# The same bytes under their 8.3 name for recipe 1.0's FAT operand.
+[input.package]
+name = "package"
+files = [{ path = "TREE.ZIP", size = 110184, sha256 = "a3d11398d116654df293eccf6fbbcf543c799bced21f8045056a28cecccfa10b" }]
+
+# Our index prose and quoted licence documents; no program or data member bundled.
+[input.licenses-lf]
+name = "licenses.txt"
+size = 65812
+sha256 = "d302c2f0401a094e8604b9ef6623f0a6e035c7cb1717e440ac1a17beef5afdae"
+bundle = true
+
+# Fixed, recipe-owned FAT metadata; the package ZIP itself is unmodified.
+[[step]]
+id = "disk"
+fat = "package"
+format = "1.44M"
+label = "FD-TREE"
+serial = 0x19800101
+order = "listed"
+time = 1980-01-01T00:00:00
+
+[[step]]
+id = "licenses"
+text = "licenses-lf"
+eol = "crlf"
+
+[[medium]]
+id = "disk-1"
+label = "Disk 1 of 1 - tree 3.7.3 package ZIP"
+format = "1.44M"
+file_name = "TREE.IMG"
+from = "disk"
+
+[[extra]]
+id = "licenses"
+file_name = "LICENSES.TXT"
+dos_name = "LICENSES.TXT"
+kind = "document"
+from = "licenses"
+
+# Exactly the same ZIP as on the floppy, with its corresponding SOURCE/ tree.
+[[extra]]
+id = "source"
+file_name = "freedos-tree-3.7.3-source.zip"
+dos_name = "SOURCE.ZIP"
+kind = "archive"
+from = "zip"

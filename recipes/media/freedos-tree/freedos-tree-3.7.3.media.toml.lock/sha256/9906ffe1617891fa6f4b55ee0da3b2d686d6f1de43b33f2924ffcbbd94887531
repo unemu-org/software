@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - tree 3.7.3 package ZIP"
+blob = "sha256:24e3559372165514d11dc15fed74f102a7ca4e84b7da089ec252556ab7dd4e47"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:6703549e2fff97be627fe7feb1ce2f8c6ada14697b2115d5fc38b366773d2fda"
+filename = "LICENSES.TXT"
+size = 67062
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:a3d11398d116654df293eccf6fbbcf543c799bced21f8045056a28cecccfa10b"
+filename = "freedos-tree-3.7.3-source.zip"
+size = 110184
+kind = "archive"
+dos_name = "SOURCE.ZIP"

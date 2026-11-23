@@ -708,6 +708,13 @@ for the mapping, gates and anonymous byte-for-byte read-back.
 
 ## Gaps of unemu 0.0.4 that shape this pipeline
 
+- Until ufe-uym.9.10 (unemu), `--fetch` with an external input without
+  URLs first downloads missing URL inputs over HTTPS into the first
+  `--library` (or a temporary library). Size and SHA-256 are verified
+  before an atomic rename to the SHA-256 filename, matching `check.yml`'s
+  download cache. That recipe then builds without `--fetch`. Bundled
+  inputs need no download; recipes whose external inputs all have URLs
+  keep the normal unemu fetch path.
 - It cannot read a remote tag's digest (`image remote ls` lists tags
   only), so `lib/publish.py` keeps its own anonymous reads.
 - `recipe check` exits 0 with drift, and `recipe conformance` with drafts

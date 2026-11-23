@@ -1,0 +1,15 @@
+# Metadata: https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/listing.csv
+# and APPINFO/APPEND.LSM of ZIP sha256:b729db26fb764a003533d303385566699af2fec3339c398df6d8f94059a009ac.
+# Title/Author supply title/developers; synopsis paraphrases Description/Summary.
+# utility/application/development and open-source are our classifications.
+recipe = "1.0"
+
+[work]
+id = "freedos-append"
+
+[title]
+title = "APPEND"
+developers = ["Eduardo Casino-Almao"]
+software_platform = "DOS"
+labels = ["utility", "open-source", "freedos"]
+synopsis = "Makes data files in selected directories accessible as if they were in the current directory."

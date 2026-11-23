@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - append 5.0-0.7 package ZIP"
+blob = "sha256:0d56d9a830a4a217d225a23c96d31f2dcdc5a053d81a93d0255f176cb1d78748"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:fb2e6d9c43bdfc7978135d3ce4cae9229ab70b5d8b16607311a917938e330a95"
+filename = "LICENSES.TXT"
+size = 47698
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:269ccc237f6c2715d1193b13fc6815209c02ab5f6eb984dcdea67264d7cf1a8a"
+filename = "freedos-append-5.0-0.7-fd1.2-source.zip"
+size = 44565
+kind = "archive"
+dos_name = "SOURCE.ZIP"

@@ -1,0 +1,15 @@
+# Metadata: https://ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/latest/listing.csv
+# and APPINFO/COMP.LSM of ZIP sha256:f0c265d72143eb670887ed46248e5a2dde85da87beb8a88cc819fcc3b1222d68.
+# Title/Author supply title/developers; synopsis paraphrases Description/Summary.
+# utility/application/development and open-source are our classifications.
+recipe = "1.0"
+
+[work]
+id = "freedos-comp"
+
+[title]
+title = "COMP"
+developers = ["Paul Vojta"]
+software_platform = "DOS"
+labels = ["utility", "open-source", "freedos"]
+synopsis = "Compares files and reports differences between their contents."

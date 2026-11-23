@@ -1,0 +1,30 @@
+schema = 1
+platform = "ibm-pc"
+
+[[media]]
+id = "disk-1"
+label = "Disk 1 of 1 - mem 1.12 package ZIP"
+blob = "sha256:09464f0088d6a55a121de2af99bc07aabae175a9a666419354550fdde2eb3e87"
+
+[media.format]
+kind = "floppy"
+
+[media.format.geometry]
+cylinders = 80
+heads = 2
+sector_bytes = 512
+sectors = 18
+
+[[extras]]
+blob = "sha256:1b61ee088332f50a1ebb9a245f05745ef47b336851d43f4d80cf839a79de6432"
+filename = "LICENSES.TXT"
+size = 78990
+kind = "document"
+dos_name = "LICENSES.TXT"
+
+[[extras]]
+blob = "sha256:ec98eb5e7afa15f587e0f85f4a748611c398cbe88bf571b17e6341532b9b746d"
+filename = "freedos-mem-1.12-fd1.4-source.zip"
+size = 106677
+kind = "archive"
+dos_name = "SOURCE.ZIP"
