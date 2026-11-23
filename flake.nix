@@ -2,7 +2,7 @@
   description = "software: reproducible builds of the open installation media sets and firmware packages of the unemu emulators";
 
   # The same nixpkgs revision as unemupc98's devShell and unemu-at-bios. The
-  # recipes need none of it (upcli builds them); the FreeDOS source archive's
+  # recipes need none of it (unemu builds them); the FreeDOS source archive's
   # script does, and GNU tar, unzip and git here gave its pinned bytes.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/d407951447dcd00442e97087bf374aad70c04cea";
 

@@ -1,0 +1,50 @@
+# The unemu release whose CLI, unemu, checks, pins, builds and pushes the
+# recipes' media sets and firmware packages (lib/publish.py, lib/recipes.py;
+# see docs/publishing.md). Recipes retain their original digests and locks;
+# moving this CLI pin is checked by building every recipe against its lock
+# again (unemu recipe conformance).
+#
+# commit   the commit the release's tag points to, in full. A release build
+#          of unemu names it on the line `commit: <commit>` of `unemu
+#          --version`; lib/publish.py and lib/unemu.py refuse an unemu that
+#          names another commit, or none.
+# tag      the release's tag; its assets are downloaded from
+#          https://github.com/unemu-org/unemu/releases/download/<tag>/
+# version  the release's version, as its archive names spell it.
+#
+# CI uses upstream setup-unemu pinned to this commit, with its version
+# input equal to tag and its commit input equal to commit. It checks the
+# archive against the release's SHA256SUMS
+# and unemu --version's commit: line, not against our archive pins (the
+# maintainer's decision of 2026-11-23). Update the three workflows together
+# with this file; tests/changed_test.py enforces their agreement.
+#
+# [archive.<target triple>]: for local use, the release archive of one
+# platform and the unemu inside it. lib/unemu.py checks both against these
+# pins, our own, never against the release's SHA256SUMS:
+#   file          unemu-<version>-<triple>.tar.gz
+#   sha256        the archive's SHA-256
+#   size          the archive's size in bytes
+#   unemu_sha256  the SHA-256 of its member unemu-<version>-<triple>/unemu
+#   unemu_size    that member's size in bytes
+#
+# The keys are exactly these: lib/unemu.py refuses any other, and a missing
+# or malformed one.
+
+commit = "ff37615ba3bd03d7e81132819cddf5633a7bd2a3"
+tag = "v0.0.4"
+version = "0.0.4"
+
+[archive.x86_64-unknown-linux-gnu]
+file = "unemu-0.0.4-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "89e81a9c938e4b93118933a6a4482ed3cd3d6d9054225fc86277378c732ce28e"
+size = 24731568
+unemu_sha256 = "45b4942468b9050d647a73a8400db9b9dcec9d96d289658e33f1efc4c90f17a9"
+unemu_size = 75352904
+
+[archive.aarch64-apple-darwin]
+file = "unemu-0.0.4-aarch64-apple-darwin.tar.gz"
+sha256 = "2560dac8572e08599667beba15ef1fa275888dfde5d952c09f995a56913fb4de"
+size = 21338222
+unemu_sha256 = "c1f385937b5f015a6461997f1243e12db9ed540e24e18b8b8265140a245b5a2c"
+unemu_size = 57674416

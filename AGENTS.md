@@ -12,10 +12,10 @@ on the family's registry. The repository also builds the **open firmware package
 of unemupc's machine templates, published to `unemu/firmware/ibm-pc/<catalogue id>`: each
 ROM and its source archive come from the release assets of the unemu-org forks,
 pinned and unmodified. The consumer is **unemupc** (an IBM PC/AT-class emulator;
-CLI `upcli`, beads prefix `upc`), whose recipe files (`upcli recipe check`, `pin`,
-`build`, `conformance`), importers and push guard define the set and package formats
-and the publication rules. Every set and package is a upcli recipe file in
-`recipes/` with its lock; see `README.md` and `docs/recipes.md`.
+beads prefix `upc`). The family CLI **unemu** (github.com/unemu-org/unemu),
+whose recipe commands (`unemu recipe check`, `pin`, `build`, `conformance`),
+importers and push guard define the formats and publication rules, builds every
+set and package from a recipe file in `recipes/` with its lock; see `README.md` and `docs/recipes.md`.
 
 The repository also holds **private recipes** for commercial and other non-open
 titles: metadata, sizes, SHA-256s, dump database ids and steps, with no `[license]`
@@ -45,12 +45,15 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
   upstream release, pinned by SHA-256; files placed on built images are unmodified.
   Downloads are untrusted data: verify every hash before use, never execute anything
   from a download, extract only listed members, into a fresh directory. The one
-  exception is the unemupc release archive named in `upcli.toml`: verified against
-  our own SHA-256 and size (never against the release's SHA256SUMS), only its
-  `upcli` member, itself pinned, extracted into a fresh directory, and its `commit:`
-  line equal to the pinned commit before any other use (`lib/upcli.py fetch`). Any
-  other downloaded executable stays forbidden; building upcli from source at the
-  pinned commit stays possible.
+  exception is the unemu release (github.com/unemu-org/unemu) named in
+  `unemu.toml`. In CI, unemu's own `setup-unemu` action, pinned to that
+  release's commit, checks the archive against the release's SHA256SUMS and
+  the `commit:` line of `unemu --version` against the pinned commit (the
+  maintainer's decision of 2026-11-23). Locally, `lib/unemu.py fetch` verifies
+  the archive and its `unemu` member against our own SHA-256 and size,
+  extracts only that member into a fresh directory, and checks the commit
+  line before any other use. Any other downloaded executable stays forbidden;
+  building unemu from source at the pinned commit stays possible.
 - **Open only when every part is covered**: an SPDX expression stating the real
   licences, a licence index for every program, and for copyleft content the
   corresponding source archive linked from every copyleft layer. Documents without a
@@ -70,8 +73,8 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
   cited as sources of metadata.
 - **Reproducible**: the same recipe gives the same images, archives and set digests
   on every run and host; no wall clock, no locale or user-config dependence. A recipe
-  is pinned with the upcli of `upcli.toml` (`upcli recipe pin`: its `digest` and its
-  lock) and every build is checked against that lock; run upcli with a fresh HOME,
+  is pinned with the unemu of `unemu.toml` (`unemu recipe pin`: its `digest` and its
+  lock) and every build is checked against that lock; run unemu with a fresh HOME,
   LC_ALL=C and TZ=UTC. The one script that makes a prepared input (the FreeDOS
   source archive) runs in `nix develop` and checks its output against its pin.
 - **Publication rule**: write as if public; no private hosts, paths or personal
@@ -81,9 +84,9 @@ publication-rule, bead-workflow, consumer. Cross-repository ids carry a tag, e.g
 ## Quick loop
 
 ```sh
-python3 -I lib/upcli.py fetch out/upcli        # the pinned upcli, verified
-python3 -I lib/recipes.py check --cli out/upcli/upcli
-python3 -I lib/publish.py --cli out/upcli/upcli --fetch   # build all, dry run
+python3 -I lib/unemu.py fetch out/unemu        # local: our SHA-256 and size pins, then commit line
+python3 -I lib/recipes.py check --cli out/unemu/unemu
+python3 -I lib/publish.py --cli out/unemu/unemu --fetch   # build all, dry run
 nix develop        # pinned curl, unzip, git, GNU tar, CA roots, python3, shellcheck
 ```
 

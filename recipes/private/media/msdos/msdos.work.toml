@@ -3,7 +3,7 @@
 # operating system. The synopsis paraphrases its English description.
 # No release's hardware requirements are asserted for the whole work.
 
-recipe = "0.1"
+recipe = "1.0"
 
 [work]
 id = "msdos"

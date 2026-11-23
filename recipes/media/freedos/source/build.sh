@@ -8,7 +8,7 @@
 # (freedos-1.4*.media.toml) take it as a prepared input, by size and SHA-256
 # ([input.source]), from its release asset
 # https://github.com/unemu-org/software/releases/download/freedos-1.4-floppy/freedos-1.4-floppy-src.tar;
-# upcli's recipe steps cannot make it (it needs an ISO reader, git and a
+# unemu's recipe steps cannot make it (it needs an ISO reader, git and a
 # tar writer). This script is the one way to make it again and to check that
 # the asset is what it should be: it builds the archive from pinned upstream
 # inputs and stops unless its SHA-256 and size are the pins below, the

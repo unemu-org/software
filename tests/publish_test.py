@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests of lib/publish.py, offline: a throwaway repository with small
-recipe files, a fake upcli that logs every call it gets and keeps a store of
+recipe files, a fake unemu that logs every call it gets and keeps a store of
 its own, a fake registry read for the pipeline, and a plain-HTTP registry on
 127.0.0.1 for the anonymous read itself. Nothing here reaches another host
 or a real registry.
@@ -36,27 +36,27 @@ recipes = publish.recipes
 
 PIN = "0123456789abcdef0123456789abcdef01234567"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"
-# A pin of a release that does not exist (lib/upcli.py checks the format).
+# A pin of a release that does not exist (lib/unemu.py checks the format).
 PIN_TOML = f"""# a comment
 commit = "{PIN}"
 tag = "v9.9.9"
 version = "9.9.9"
 
 [archive.x86_64-unknown-linux-gnu]
-file = "unemupc-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
+file = "unemu-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
 sha256 = "{'a' * 64}"
 size = 1
-upcli_sha256 = "{'b' * 64}"
-upcli_size = 1
+unemu_sha256 = "{'b' * 64}"
+unemu_size = 1
 """
-# What a release build of upcli prints for --version, in the shape of
-# unemupc's crates/upcli/src/about.rs, its commit line as
+# What a release build of unemu prints for --version, in the shape of
+# unemu's version notice, its commit line as
 # crates/platforms/src/lib.rs (commit_line) writes it: the third-party
 # notice names a commit of its own.
-VERSION = f"""upcli 9.9.9
+VERSION = f"""unemu 9.9.9
 emulator of period IBM-compatible PCs, command line
 licence: AGPL-3.0-or-later
-source: https://github.com/unemu-org/unemupc/tree/v9.9.9
+source: https://github.com/unemu-org/unemu/tree/v9.9.9
 commit: {PIN}
 full licence texts: LICENSE, and THIRD-PARTY-LICENSES.md
 
@@ -69,12 +69,12 @@ USER = "synthetic-user"
 SECRET = "synthetic-secret-value"
 USER_ENV, PASSWORD_ENV, HOST_ENV = publish.USER_ENV, publish.PASSWORD_ENV, publish.HOST_ENV
 
-# The fake upcli: it appends every call (arguments, environment and the
-# registries file it was given) to a log and answers as upcli 0.0.3 does on
+# The fake unemu: it appends every call (arguments, environment and the
+# registries file it was given) to a log and answers as unemu 0.0.4 does on
 # the lines the pipeline reads (or as the test's configuration says, to
 # check that the pipeline notices). `recipe build` reads the recipe's
 # identity and writes a small artifact for it into the store, an OCI layout
-# as upcli's (images/index.json, images/blobs/sha256/), which `image media
+# as unemu's (images/index.json, images/blobs/sha256/), which `image media
 # show` and `image firmware show` read; a push records the target in a JSON
 # file the fake registry reads.
 FAKE_CLI = r'''#!@PYTHON@ -I
@@ -210,7 +210,7 @@ sys.exit(2)
 '''
 
 MEDIA_RECIPE = """# A test set.
-recipe = "0.1"
+recipe = "1.0"
 work = "@WORK@"
 
 [media]
@@ -235,7 +235,7 @@ sha256 = "@A@"
 bundle = true
 """
 
-FIRMWARE_RECIPE = """recipe = "0.1"
+FIRMWARE_RECIPE = """recipe = "1.0"
 
 [firmware]
 name = "unemu/firmware/ibm-pc/@ID@"
@@ -255,7 +255,7 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-# The artifact the fake upcli builds for a ref: a manifest naming a config
+# The artifact the fake unemu builds for a ref: a manifest naming a config
 # and one layer, each a blob of its own; the same function in the fake.
 ARTIFACT = '''def artifact(ref):
     parts = [("config of " + ref).encode(), ("layer of " + ref).encode()]
@@ -267,7 +267,7 @@ exec(ARTIFACT)
 
 
 def fake_digest(ref):
-    """The digest the fake upcli gives REF: its manifest's."""
+    """The digest the fake unemu gives REF: its manifest's."""
     return "sha256:" + sha256(artifact(ref)[0])
 
 
@@ -291,7 +291,7 @@ BIOS = "recipes/firmware/demo-bios.firmware.toml"
 
 class FakeRegistry:
     """The anonymous registry read: what the test put there, plus what the
-    fake upcli pushed."""
+    fake unemu pushed."""
 
     def __init__(self, pushed):
         self.pushed = pushed
@@ -325,7 +325,7 @@ class Repository:
         self.pushed = self.base / "pushed.json"
         self.bin = self.base / "bin"
         self.bin.mkdir()
-        self.cli = self.bin / "upcli"
+        self.cli = self.bin / "unemu"
         self.configure()
         text = FAKE_CLI
         for name, value in (("@PYTHON@", sys.executable), ("@CONFIG@", repr(str(self.config))),
@@ -394,7 +394,7 @@ class Repository:
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
     def builds(self):
-        """The recipe files `upcli recipe build` was given, relative to the
+        """The recipe files `unemu recipe build` was given, relative to the
         root."""
         return [pathlib.Path(c["argv"][2]).relative_to(self.root).as_posix()
                 for c in self.calls() if c["argv"][:2] == ["recipe", "build"]]
@@ -431,7 +431,7 @@ class Arguments(Case):
         self.assertEqual(code, 0, stderr)
         calls = self.repo.calls()
         self.assertEqual(calls[0]["argv"], ["--version"])
-        # Every recipe checked by upcli once, before anything is built.
+        # Every recipe checked by unemu once, before anything is built.
         self.assertEqual(calls[1]["argv"], ["recipe", "check", str(self.repo.root / M1), str(self.repo.root / M2)])
         builds = [c["argv"] for c in calls if c["argv"][:2] == ["recipe", "build"]]
         store = builds[0][builds[0].index("--store") + 1]
@@ -479,7 +479,7 @@ class Arguments(Case):
                 self.assertNotIn("--fetch", argv)
                 self.assertNotIn("--library", argv)
 
-    def test_upcli_environment_is_its_own(self):
+    def test_unemu_environment_is_its_own(self):
         self.repo.media()
         environ = self.repo.environ(push=True, GITHUB_TOKEN="x", UNEMU_PROMOTE_PASSWORD="x", KEPT="x")
         code, _, stderr = self.repo.run("--push", environ=environ)
@@ -541,12 +541,12 @@ class Arguments(Case):
             code = publish.main([], root=self.repo.root, registry=self.repo.registry,
                                 environ=self.repo.environ())
         self.assertEqual(code, 2)
-        self.assertIn("--cli UPCLI", stderr.getvalue())
+        self.assertIn("--cli UNEMU", stderr.getvalue())
         self.assertEqual(self.repo.calls(), [])
         for run_number in ("1", "9", "10", "9" * 20):
             self.assertTrue(publish.RUN.fullmatch(run_number), run_number)
 
-    def test_registry_host_is_checked_as_upcli_checks_it(self):
+    def test_registry_host_is_checked_as_unemu_checks_it(self):
         self.repo.media()
         for text in ("registry", "https://registry.invalid", "registry.invalid/x", "registry.invalid:",
                      "registry.invalid:65536", "registry.invalid:99999", "registry.invalid:x",
@@ -566,11 +566,11 @@ class Arguments(Case):
     def test_a_cli_name_is_looked_up_on_path(self):
         self.repo.media()
         environ = self.repo.environ(PATH=f"{self.repo.bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        code, _, stderr = self.repo.run(environ=environ, cli="upcli")
+        code, _, stderr = self.repo.run(environ=environ, cli="unemu")
         self.assertEqual(code, 0, stderr)
-        self.assertIn(f"upcli {self.repo.cli}", stderr)
+        self.assertIn(f"unemu {self.repo.cli}", stderr)
         self.repo.log.unlink()
-        code, _, stderr = self.repo.run(cli="upcli-not-on-path")
+        code, _, stderr = self.repo.run(cli="unemu-not-on-path")
         self.assertEqual(code, 2)
         self.assertIn("not found on PATH", stderr)
         self.assertEqual(self.repo.calls(), [])
@@ -614,8 +614,8 @@ class Digests(Case):
             row = self.row(stdout, MEDIA, tag)
             self.assertEqual(row[2:4], [alias, fake_digest(f"{MEDIA}:{tag}")])
             self.assertEqual(row[4:], ["dry", "run", "GPL-2.0-or-later"])
-        self.assertIn(f"upcli pin {PIN} (unemupc v9.9.9, upcli.toml)", stderr)
-        self.assertIn(f"upcli --version reports commit {PIN}, as pinned", stderr)
+        self.assertIn(f"unemu pin {PIN} (unemu v9.9.9, unemu.toml)", stderr)
+        self.assertIn(f"unemu --version reports commit {PIN}, as pinned", stderr)
 
     def test_mismatch_fails(self):
         self.repo.media(pins=("match", "sha256:" + "e" * 64))
@@ -623,7 +623,7 @@ class Digests(Case):
         self.assertEqual(code, 1)
         self.assertEqual(self.outcome(stdout, T1), "dry")
         self.assertEqual(self.outcome(stdout, T2), "mismatch")
-        self.assertIn(f"upcli gives {fake_digest(f'{MEDIA}:{T2}')}, the recipe pins sha256:{'e' * 64}", stdout)
+        self.assertIn(f"unemu gives {fake_digest(f'{MEDIA}:{T2}')}, the recipe pins sha256:{'e' * 64}", stdout)
 
     def test_a_draft_is_unpinned_and_never_pushed(self):
         self.repo.media(pins=("match", None))
@@ -631,7 +631,7 @@ class Digests(Case):
         self.assertEqual(code, 1)
         row = self.row(stdout, MEDIA, T2)
         self.assertEqual(row[3:5], [fake_digest(f"{MEDIA}:{T2}"), "unpinned"])
-        self.assertIn("a draft: the recipe has no digest pin (upcli recipe pin); never pushed", stdout)
+        self.assertIn("a draft: the recipe has no digest pin (unemu recipe pin); never pushed", stdout)
         self.assertIn(f"{M2}: {MEDIA}:{T2} (a draft)", self.repo.run()[2])
         # A build that says draft is unpinned, whatever the recipe file says.
         self.repo.configure(build_line=f"built {MEDIA}:{T1}\t{fake_digest(f'{MEDIA}:{T1}')}\tdraft")
@@ -695,7 +695,7 @@ class Digests(Case):
             ({"dry_target": f"{HOST}/{ref}"}, f"push --dry-run {HOST}/{MEDIA}:{A1}: the plan names another"),
             ({"dry_image": other}, "the plan names another target or image"),
             ({"dry_status": 1}, "push --dry-run"),
-            # A guard that does not say allowed fails even when upcli exits 0.
+            # A guard that does not say allowed fails even when unemu exits 0.
             ({"guard_line": "guard:refused"}, "push --dry-run"),
             ({"guard_line": "guard:allowed but"}, "push --dry-run"),
         ):
@@ -717,12 +717,12 @@ class Digests(Case):
         # A recipe this pipeline cannot read, or that it does not publish.
         for text, fragment in (
             ("not toml [", "not a TOML recipe"),
-            ('recipe = "0.1"\n[firmware]\nname = "unemu/firmware/ibm-pc/x"\nrevision = 1\n', "one identity table"),
-            ('recipe = "0.1"\n[media]\nname = "other/media/ibm-pc/x"\nrevision = 1\n', "not under unemu/media/"),
-            ('recipe = "0.1"\n[media]\nname = "unemu/media/ibm-pc/x"\nrelease = "1.0-r2"\nrevision = 1\n',
+            ('recipe = "1.0"\n[firmware]\nname = "unemu/firmware/ibm-pc/x"\nrevision = 1\n', "one identity table"),
+            ('recipe = "1.0"\n[media]\nname = "other/media/ibm-pc/x"\nrevision = 1\n', "not under unemu/media/"),
+            ('recipe = "1.0"\n[media]\nname = "unemu/media/ibm-pc/x"\nrelease = "1.0-r2"\nrevision = 1\n',
              "is not a release"),
-            ('recipe = "0.1"\n[media]\nname = "unemu/media/ibm-pc/x"\nrevision = 0\n', "not a whole number"),
-            ('recipe = "0.1"\n[media]\nname = "unemu/media/ibm-pc/x"\nrevision = 1\ndigest = "sha256:x"\n',
+            ('recipe = "1.0"\n[media]\nname = "unemu/media/ibm-pc/x"\nrevision = 0\n', "not a whole number"),
+            ('recipe = "1.0"\n[media]\nname = "unemu/media/ibm-pc/x"\nrevision = 1\ndigest = "sha256:x"\n',
              "is not sha256:"),
         ):
             (self.repo.root / "recipes" / "media" / "demo" / "c.media.toml").write_text(text, encoding="utf-8")
@@ -731,11 +731,11 @@ class Digests(Case):
             self.assertIn(fragment, stderr, text)
             self.assertEqual(self.repo.calls(), [])
         (self.repo.root / "recipes" / "media" / "demo" / "c.media.toml").unlink()
-        # upcli's own check over every recipe: a finding stops the run.
+        # unemu's own check over every recipe: a finding stops the run.
         self.repo.configure(check_findings=1, check_lines=[f"{M1}:3:1: error[6.11.3] x: synthetic"])
         code, stdout, stderr = self.repo.run(M2)
         self.assertEqual((code, stdout), (1, ""))
-        self.assertIn("refused: upcli recipe check: 2 files checked, 1 findings", stderr)
+        self.assertIn("refused: unemu recipe check: 2 files checked, 1 findings", stderr)
         self.assertIn("error[6.11.3] x: synthetic", stderr)
         self.assertEqual([c["argv"][:2] for c in self.repo.calls()], [["--version"], ["recipe", "check"]])
 
@@ -744,7 +744,7 @@ class Digests(Case):
         self.repo.configure(check_silent=[str(self.repo.root / M1)])
         code, stdout, stderr = self.repo.run(M2)
         self.assertEqual((code, stdout), (1, ""))
-        self.assertIn(f"refused: upcli recipe check printed no ok line for {self.repo.root / M1}", stderr)
+        self.assertIn(f"refused: unemu recipe check printed no ok line for {self.repo.root / M1}", stderr)
         self.assertEqual([c["argv"][:2] for c in self.repo.calls()], [["--version"], ["recipe", "check"]])
 
     def test_drift_is_reported_and_no_refusal_here(self):
@@ -762,7 +762,7 @@ class Private(Case):
         path = f"{folder}/private.{kind}.toml"
         target = self.repo.root / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        text = (f'recipe = "0.1"\n[{kind}]\nname = "private/{kind}/ibm-pc/demo"\n'
+        text = (f'recipe = "1.0"\n[{kind}]\nname = "private/{kind}/ibm-pc/demo"\n'
                 f'platform = "ibm-pc"\nrevision = 1\ndigest = "sha256:{"d" * 64}"\n')
         if kind == "media":
             text += 'release = "1.0"\n'
@@ -784,7 +784,8 @@ class Private(Case):
                 self.assertEqual(self.repo.builds(), [M1, M2])
                 self.assertEqual([r["recipe"] for r in json.loads(report.read_text())], [M1, M2])
                 for call in self.repo.calls():
-                    self.assertFalse(any("private/" in arg for arg in call["argv"]), call)
+                    self.assertFalse(any(arg.startswith("private/") or "recipes/private/" in arg
+                                         for arg in call["argv"]), call)
                 self.assertTrue(all(not repository.startswith("private/")
                                     for _, repository, _ in self.repo.registry.calls))
 
@@ -816,7 +817,8 @@ class Private(Case):
         self.assertEqual(code, 0, stderr)
         self.assertEqual(self.repo.builds(), [])
         for call in self.repo.calls():
-            self.assertFalse(any("private/" in arg for arg in call["argv"]), call)
+            self.assertFalse(any(arg.startswith("private/") or "recipes/private/" in arg
+                                 for arg in call["argv"]), call)
 
     def test_only_private_is_an_empty_success_without_an_implicit_check(self):
         self.add_private()
@@ -833,8 +835,8 @@ class Pin(Case):
         root = self.repo.root
         pin = publish.read_pin(root)
         self.assertEqual((pin.commit, pin.tag, pin.version), (PIN, "v9.9.9", "9.9.9"))
-        # tests/upcli_test.py tests the format; here, that a refused pin
-        # stops the run before upcli runs.
+        # tests/unemu_test.py tests the format; here, that a refused pin
+        # stops the run before unemu runs.
         for text in ("", "# only a comment\n", PIN_TOML.replace(PIN, PIN[:12]),
                      PIN_TOML.replace(PIN, PIN.upper()), f'commit = "{PIN}"\n' + PIN_TOML,
                      PIN_TOML.replace("tag = ", "branch = "), PIN + "\n"):
@@ -859,12 +861,12 @@ class Pin(Case):
         self.repo.log.unlink()
         refused = (
             # Another commit.
-            (VERSION.replace(f"commit: {PIN}", f"commit: {OTHER}"), f"reports commit {OTHER}; upcli.toml pins {PIN}"),
+            (VERSION.replace(f"commit: {PIN}", f"commit: {OTHER}"), f"reports commit {OTHER}; unemu.toml pins {PIN}"),
             # No commit line: a source build without UNEMUPC_SOURCE_COMMIT,
-            # or upcli before 0.0.2; a hash anywhere else does not count.
+            # or unemu before 0.0.2; a hash anywhere else does not count.
             (VERSION.replace(f"commit: {PIN}\n", ""), "prints no commit line"),
-            (f"upcli 0.1.0 ({PIN})", "prints no commit line"),
-            (f"source: https://github.com/unemu-org/unemupc/tree/{PIN}", "prints no commit line"),
+            (f"unemu 0.1.0 ({PIN})", "prints no commit line"),
+            (f"source: https://github.com/unemu-org/unemu/tree/{PIN}", "prints no commit line"),
             (f" commit: {PIN}", "prints no commit line"),
             (f"Commit: {PIN}", "prints no commit line"),
             # A malformed or repeated commit line.
@@ -895,10 +897,10 @@ class Pin(Case):
                 self.repo.log.unlink()
 
     def test_reported_commit(self):
-        self.assertEqual(publish.upcli.reported_commit(VERSION), PIN)
-        self.assertEqual(publish.upcli.reported_commit(VERSION + "\r\n"), PIN)
-        self.assertIsNone(publish.upcli.reported_commit(""))
-        self.assertIsNone(publish.upcli.reported_commit(f"upcli 0.0.1\nsource: x/tree/{PIN}\n"))
+        self.assertEqual(publish.unemu.reported_commit(VERSION), PIN)
+        self.assertEqual(publish.unemu.reported_commit(VERSION + "\r\n"), PIN)
+        self.assertIsNone(publish.unemu.reported_commit(""))
+        self.assertIsNone(publish.unemu.reported_commit(f"unemu 0.0.1\nsource: x/tree/{PIN}\n"))
 
 
 class Push(Case):
@@ -1043,7 +1045,7 @@ class Push(Case):
         self.assertEqual(code, 1)
         digest = fake_digest(f"{MEDIA}:{T1}")
         self.assertEqual(self.outcome(stdout, T1), "unconfirmed")
-        self.assertIn(f"unconfirmed: upcli pushed {digest} to :{T1}; the registry serves None", stdout)
+        self.assertIn(f"unconfirmed: unemu pushed {digest} to :{T1}; the registry serves None", stdout)
         self.assertEqual(self.outcome(stdout, T2), "held")
         # The alias waits for its revision.
         self.assertEqual(len(self.repo.pushes()), 1)
@@ -1064,7 +1066,7 @@ class Push(Case):
                 code, stdout, _ = self.repo.run("--push", f"{MEDIA}:{T1}")
                 self.assertEqual(code, 1)
                 self.assertEqual(self.outcome(stdout, T1), outcome)
-                self.assertIn(f"upcli pushed {digest} to :{tag}; the read-back failed: {shown}", stdout)
+                self.assertIn(f"unemu pushed {digest} to :{tag}; the read-back failed: {shown}", stdout)
                 self.assertEqual(len(self.repo.pushes()), pushes)
                 self.assertEqual(f"the revision tag {T1} is on the registry" in stdout, outcome == "partial")
 
@@ -1085,7 +1087,7 @@ class Push(Case):
             ({"push_word": "moved"}, "unexpected last line"),
             ({"push_word": "uploaded"}, "unexpected last line"),
             ({"push_target": f"{HOST}/{MEDIA}:9.9-r1"}, "unexpected last line"),
-            ({"push_digest": "sha256:" + "c" * 64}, f"upcli pushed sha256:{'c' * 64} to :{T1}"),
+            ({"push_digest": "sha256:" + "c" * 64}, f"unemu pushed sha256:{'c' * 64} to :{T1}"),
         ):
             self.repo.pushed.unlink(missing_ok=True)
             self.repo.configure(**settings)
@@ -1204,7 +1206,7 @@ class Experimental(Case):
                 self.assertEqual(code, 1)
                 self.assertIn(f"refused: the experimental repository {repository} of {ref} is 256 bytes, "
                               "longer than 255", stderr)
-                # Refused before any upcli call.
+                # Refused before any unemu call.
                 self.assertEqual(repo.calls(), [])
                 # Its own repository is within the limit.
                 self.assertEqual(repo.run()[0], 0)
@@ -1248,7 +1250,7 @@ class SkipPublished(Case):
             for tag, alias in ((T1, A1), (T2, A2)):
                 row = self.row(stdout, MEDIA, tag)
                 self.assertEqual(row[2:5], [alias, fake_digest(f"{MEDIA}:{tag}"), "published"], args)
-            # upcli only checks its version and the recipes: no build, no
+            # unemu only checks its version and the recipes: no build, no
             # show, no dry run, no push.
             self.assertEqual([c["argv"][:2] for c in self.repo.calls()], [["--version"], ["recipe", "check"]], args)
             # One read of each tag and alias, and none for a push.
@@ -1481,7 +1483,7 @@ class NoBuild(Case):
 
     @staticmethod
     def steps(calls):
-        """Each upcli call as (what, ref[, target])."""
+        """Each unemu call as (what, ref[, target])."""
         result = []
         for argv in (c["argv"] for c in calls):
             if argv == ["--version"]:
@@ -1517,7 +1519,7 @@ class NoBuild(Case):
                              (f"{MEDIA}:{T2}", [f"{MEDIA}:{T2}", f"{MEDIA}:{A2}"])):
             checks += [("show", ref)] + [("dry run", ref, f"{HOST}/{t}") for t in targets]
         self.assertEqual(self.steps(self.repo.calls()), [("version",), ("check",), *checks])
-        # upcli reads a clean store of the run's own, never the given one.
+        # unemu reads a clean store of the run's own, never the given one.
         stores = {c["argv"][c["argv"].index("--store") + 1] for c in self.repo.calls() if "--store" in c["argv"]}
         self.assertEqual(len(stores), 1)
         self.assertTrue(stores.pop().startswith(str(self.repo.root / "build" / "publish.")))
@@ -1547,7 +1549,7 @@ class NoBuild(Case):
     def broken(self, change):
         """The store of M1, changed by CHANGE(store, manifest digest, blob
         paths), then --no-build --push of M1: its exit status, stdout and
-        the upcli calls after --version and recipe check."""
+        the unemu calls after --version and recipe check."""
         store = self.repo.base / "store"
         if store.exists():
             publish.remove_tree(store)
@@ -1560,7 +1562,7 @@ class NoBuild(Case):
         code, stdout, _ = self.repo.run("--no-build", "--store", str(store), "--push", M1)
         return code, stdout, [c["argv"][:2] for c in self.repo.calls()[2:]]
 
-    def test_every_byte_of_the_store_is_checked_before_upcli_reads_it(self):
+    def test_every_byte_of_the_store_is_checked_before_unemu_reads_it(self):
         self.repo.media()
         index_path = lambda store: store / "images" / "index.json"  # noqa: E731
 
@@ -1622,7 +1624,7 @@ class NoBuild(Case):
                 self.assertEqual(code, 1)
                 self.assertEqual(self.outcome(stdout, T1), outcome)
                 self.assertIn(fragment, stdout)
-                # upcli never read the store, and nothing was pushed.
+                # unemu never read the store, and nothing was pushed.
                 self.assertEqual(calls, [])
                 self.assertEqual(self.repo.pushes(), [])
 
@@ -1640,7 +1642,7 @@ class NoBuild(Case):
         self.assertIn("never taken from the store or pushed", stdout)
         self.assertEqual(self.outcome(stdout, T1), "held")
         self.assertNotIn(f"== take {MEDIA}:{T2}", stderr)
-        # upcli saw only the pinned set, in a clean store that never held
+        # unemu saw only the pinned set, in a clean store that never held
         # the draft.
         refs = {c["argv"][2] if c["argv"][:2] == ["image", "push"] else c["argv"][3]
                 for c in self.repo.calls() if c["argv"][:1] == ["image"]}
@@ -1735,7 +1737,7 @@ class Firmware(Case):
         self.assertEqual(code, 1)
         self.assertEqual(self.firmware_outcome(stdout), "unpinned")
         self.assertEqual(self.row(stdout, "unemu/firmware/ibm-pc/other-bios", "r1")[4], "mismatch")
-        self.assertIn(f"upcli gives {fake_digest('unemu/firmware/ibm-pc/other-bios:r1')}, the recipe pins "
+        self.assertIn(f"unemu gives {fake_digest('unemu/firmware/ibm-pc/other-bios:r1')}, the recipe pins "
                       f"sha256:{'e' * 64}", stdout)
         code, stdout, _ = self.repo.run("--push", "recipes/firmware/bios.firmware.toml")
         self.assertEqual(code, 1)

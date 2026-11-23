@@ -5,8 +5,11 @@ description: Use when adding or changing a recipe in this repository (unemu-org/
 
 # Adding a recipe
 
-A recipe is a upcli recipe file (TOML 1.0, closed steps, inputs by size and
-SHA-256, a lock) that builds one media set or one firmware package. Read
+A recipe is an unemu recipe file (TOML 1.0, closed steps, inputs by size and
+SHA-256, a lock) that builds one media set or one firmware package. Recipe
+format **1.0 is frozen** (unemupc decision-43): every recipe and work file
+declares `recipe = "1.0"`; unemu 0.0.4 refuses `"0.1"`. The schema is the
+[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json). Read
 `AGENTS.md` (hard rules) and `docs/recipes.md` (format) before writing one;
 this skill is the procedure, they are the rules.
 
@@ -53,12 +56,20 @@ and ask the maintainer; record the question in the bead.
 
 ## 3. Write it
 
-1. **Get the pinned upcli**: `python3 -I lib/upcli.py fetch out/upcli`.
-   Run upcli with a fresh `HOME`, `LC_ALL=C`, `TZ=UTC`.
+1. **Get the pinned unemu**: `python3 -I lib/unemu.py fetch out/unemu`.
+   Locally this verifies the release archive and its `unemu` member against
+   our own SHA-256 and size pins in `unemu.toml`, then checks the commit
+   line. CI instead uses upstream `setup-unemu`, pinned to the release
+   commit: it checks the archive against the release's `SHA256SUMS` and
+   runs `unemu --version` to check its `commit:` line, without checking our
+   archive pins (the maintainer's decision of 2026-11-23). When moving to
+   a new release, update `unemu.toml` and all three workflows together;
+   `tests/changed_test.py` in the README check command enforces agreement.
+   Run unemu with a fresh `HOME`, `LC_ALL=C`, `TZ=UTC`.
 2. **Obtain the inputs**: download authorised open inputs into a fresh
    directory; private inputs stay in the maintainer's library, read-only.
    Treat all inputs as untrusted: never run them or extract into the tree.
-3. **Scaffold first, always**: run `upcli recipe scaffold FILE|FOLDER...`
+3. **Scaffold first, always**: run `unemu recipe scaffold FILE|FOLDER...`
    on the inputs for every kind, including firmware and private recipes.
    Start from its `[input]` tables and member lists (sizes, hashes and
    archive times); ids may be renamed. Hand-measured inputs or a hand-rolled
@@ -93,23 +104,23 @@ The commands below are for open outputs; private recipes follow
 [references/private.md](references/private.md) and are never built by CI
 or `lib/publish.py`. All store-using commands must pass `--store`
 explicitly. `check`, `show` and `scaffold` have no store option.
-upcli 0.0.3 has no `recipe build --create`: create each fresh store first
-with `upcli library scan "$EMPTY" --store "$S1"`, where `$EMPTY` is an
+unemu 0.0.4 has no `recipe build --create`: create each fresh store first
+with `unemu library scan "$EMPTY" --store "$S1"`, where `$EMPTY` is an
 empty scratch folder (repeat for `$S2` and `$S3`). `library scan` creates
 the store without importing an image. Both this gap and `recipe plan`
 writing its library index in the default store when `--store` is absent
 are filed as `upc-5pw.113.15` in unemupc.
 
 ```sh
-upcli recipe check FILE && upcli recipe show FILE
-upcli recipe build FILE --fetch --store "$S1"      # review: upcli image media show <tag> --store "$S1"
-upcli recipe pin FILE --fetch --store "$S2"        # writes digest and FILE.lock/
+unemu recipe check FILE && unemu recipe show FILE
+unemu recipe build FILE --fetch --store "$S1"      # review: unemu image media show <tag> --store "$S1"
+unemu recipe pin FILE --fetch --store "$S2"        # writes digest and FILE.lock/
 # pin a copy of the draft again from $S2/cache/downloads only, new store: recipe and lock byte-identical (diff -r)
-python3 -I lib/recipes.py check --cli out/upcli/upcli
-python3 -I lib/publish.py --cli out/upcli/upcli --fetch FILE        # every row: dry run
-upcli recipe conformance FILE --library "$S2/cache/downloads" --store "$S3"
-python3 -I lib/plan.py --cli out/upcli/upcli FILE --store "$S3"    # ready / needs --fetch
-upcli recipe push FILE unemu/recipes/media/<platform>/<work>:<tag> --dry-run --store "$S3"
+python3 -I lib/recipes.py check --cli out/unemu/unemu
+python3 -I lib/publish.py --cli out/unemu/unemu --fetch FILE        # every row: dry run
+unemu recipe conformance FILE --library "$S2/cache/downloads" --store "$S3"
+python3 -I lib/plan.py --cli out/unemu/unemu FILE --store "$S3"    # ready / needs --fetch
+unemu recipe push FILE unemu/recipes/media/<platform>/<work>:<tag> --dry-run --store "$S3"
 ```
 
 For firmware use `unemu/recipes/firmware/<platform>/<catalogue id>:<tag>`.
@@ -124,12 +135,13 @@ rebuilds on Linux; its digests must equal the macOS pins.
 
 ## 5. Publish
 
-**No recipe is pushed to any registry before unemupc's recipe format 1.0
-freeze (`upc-5pw.113.17`).** Verification still includes the recipe push
-dry run above. After the freeze, recipes of private outputs are public
-text under `unemu/recipes/...`; their outputs under `private/` never leave
-the user's registries. Publishing outputs and publishing recipes are
-separate actions; neither is authorised by a successful dry run.
+**Recipe format 1.0 is frozen (unemupc decision-43), but publishing recipe
+artifacts requires the maintainer's later decision.** Verification still
+includes the local recipe push dry run above; this migration adds no recipe
+push step. Recipes of private outputs are public text under
+`unemu/recipes/...`; their outputs under `private/` never leave the user's
+registries. Publishing outputs and publishing recipes are separate actions;
+neither is authorised by a successful dry run.
 
 unemupc's template build builds its three firmware packages and FreeDOS
 sets from our recipes, copied into `crates/pc-image/data/recipes/` in
@@ -151,11 +163,11 @@ coordinate the firmware and FreeDOS files and digests as described above.
 - "Word for word" means word for word: no joining of two sections.
 - A licence text inside the game ("not shareware") can be superseded by a
   later release statement: say so in the licence index.
-- Files under 256 bytes: their hash discloses them; mind upcli's
+- Files under 256 bytes: their hash discloses them; mind unemu's
   `disclosable` guard in private recipes.
 - Changing metadata changes the digest: before unemupc's first public
   release a published item is replaced (maintainer deletes its tag and
   alias), after it a new revision is needed.
-- Report upcli misbehaviour to the unemupc session with a reproducer so it
+- Report unemu misbehaviour to the unemupc session with a reproducer so it
   gets a bead. Exit 0 on drift is `upc-5pw.113.20`; `lib/recipes.py check`
   stays the CI guard meanwhile.

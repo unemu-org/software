@@ -1,5 +1,5 @@
 # Private description only: two user-supplied disks, used byte for byte.
-# MEASURED: upcli 0.0.3 recipe scaffold supplied the input names, sizes
+# MEASURED: the previous CLI (0.0.3) recipe scaffold supplied the input names, sizes
 # and SHA-256s below; ids alone were renamed. 368640 bytes maps to 360K.
 # READ: MS-DOS work identity: https://www.wikidata.org/wiki/Q47604
 # (retrieved 2026-11-20). It lists a version 3.30, but does not identify
@@ -17,7 +17,7 @@
 # source for this particular release is asserted. No text is taken from
 # the title's files.
 
-recipe = "0.1"
+recipe = "1.0"
 work = "msdos"
 
 [media]

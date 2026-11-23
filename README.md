@@ -3,8 +3,8 @@
 Reproducible builds of the open installation media sets
 (`unemu/media/ibm-pc/<work>:<release>-rN`) and open firmware packages
 (`unemu/firmware/ibm-pc/<catalogue id>:rN`) of the unemu emulators. Each
-one is a recipe file of [unemupc](https://github.com/unemu-org/unemupc)'s
-CLI, `upcli`: pinned upstream inputs, its licences and corresponding
+one is a recipe file of [unemu](https://github.com/unemu-org/unemu),
+the family CLI: pinned upstream inputs, its licences and corresponding
 sources, and a lock that pins every byte of the OCI artifact it builds,
 which unemupc's library and machine templates pull.
 
@@ -33,29 +33,42 @@ The full rules are in [AGENTS.md](AGENTS.md).
 ## Quick start
 
 ```sh
-python3 -I lib/upcli.py fetch out/upcli                 # the pinned upcli, verified
-python3 -I lib/recipes.py check --cli out/upcli/upcli   # check every recipe
-python3 -I lib/publish.py --cli out/upcli/upcli --fetch # build all open recipes against their locks, dry run
+python3 -I lib/unemu.py fetch out/unemu                 # local: our SHA-256 and size pins, then commit line
+python3 -I lib/recipes.py check --cli out/unemu/unemu   # check every recipe
+python3 -I lib/publish.py --cli out/unemu/unemu --fetch # build all open recipes against their locks, dry run
 ```
 
 Python 3.11 or later; `nix develop` provides it. The dry run needs no
 credentials and never contacts a registry; it downloads the recipes' inputs
 from the URLs they pin, each checked by size and SHA-256.
 
+Locally, `lib/unemu.py fetch` verifies both the release archive and its
+`unemu` member against our own SHA-256 and size pins in `unemu.toml`, then
+checks the commit line. CI uses upstream `setup-unemu`, pinned to the
+release commit: it checks the archive against the release's `SHA256SUMS`
+and runs `unemu --version` to check its `commit:` line, without checking
+our archive pins (the maintainer's decision of 2026-11-23). To change the
+release, update `unemu.toml` and all three workflows together; the README
+check command tests their agreement. See [publishing](docs/publishing.md#the-pinned-unemu).
+
 ## What can I build from my files?
 
-`python3 -I lib/plan.py --cli out/upcli/upcli --library /path/to/files`
-surveys every recipe using your upcli libraries and local store: `ready`,
+`python3 -I lib/plan.py --cli out/unemu/unemu --library /path/to/files`
+surveys every recipe using your unemu libraries and local store: `ready`,
 `needs --fetch`, `missing` or `invalid`. It builds and downloads nothing.
 Give recipe files or folders to narrow the survey, or `--json` for JSON;
 the footer shows how to build and push to your own private registry.
 See [docs/recipes.md](docs/recipes.md#planning-from-local-files).
 
+Recipe format **1.0 is frozen** (unemupc decision-43); its schema is the
+[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+Publishing recipe artifacts requires a later maintainer decision.
+
 ## Publishing
 
 `lib/publish.py --push` pushes only when every selected set and package
 passed its checks and its recipe pins its digest. The registry credentials
-come from the environment and reach only the `upcli image push` call. A
+come from the environment and reach only the `unemu image push` call. A
 revision tag never moves: one that already holds another digest is
 refused, and `--move` is never used. Each set's release alias is pushed
 after its revision, and refused, never moved, when it names another image;
@@ -75,8 +88,8 @@ published.
   recipe per firmware package ([docs/recipes.md](docs/recipes.md)).
 - `recipes/media/freedos/source/`: the script that makes the FreeDOS source
   archive, a prepared input; `lib/source.sh`: its helpers.
-- `lib/publish.py`, `lib/recipes.py`, `lib/upcli.py`, `upcli.toml`: the
-  publish pipeline, the recipe files as it reads them, and the pinned upcli
+- `lib/publish.py`, `lib/recipes.py`, `lib/unemu.py`, `unemu.toml`: the
+  publish pipeline, the recipe files as it reads them, and the pinned unemu
   ([docs/publishing.md](docs/publishing.md)).
 - `lib/changed.py`, `.github/workflows/`: the CI and what a change touches.
 - `tests/`: offline tests.
@@ -95,8 +108,8 @@ nix develop --command bash -c '
   for test in tests/*_test.py; do python3 -I "$test" || exit 1; done'
 ```
 
-and, with the pinned upcli, `python3 -I lib/recipes.py check --cli
-out/upcli/upcli`.
+and, with the pinned unemu, `python3 -I lib/recipes.py check --cli
+out/unemu/unemu`.
 
 ## Licence
 

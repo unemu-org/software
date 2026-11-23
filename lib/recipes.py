@@ -2,21 +2,21 @@
 """The recipe files of this repository, as lib/publish.py and lib/changed.py
 read them, and the check CI runs over them.
 
-    python3 -I lib/recipes.py check --cli UPCLI [FILE|FOLDER]...
+    python3 -I lib/recipes.py check --cli UNEMU [FILE|FOLDER]...
 
-A recipe is a recipe file of upcli, the pinned unemupc release's CLI
-(recipe version 0.1; docs/recipes.md): recipes/**/NAME.media.toml builds one
+A recipe is a recipe file of unemu, the pinned unemu release's CLI
+(recipe format 1.0, frozen; docs/recipes.md): recipes/**/NAME.media.toml builds one
 media set, recipes/**/NAME.firmware.toml one firmware package. Hidden
 folders and lock folders (FILE.lock/) hold none. Beside a recipe may lie
 its work file (WORK.work.toml, named by `work = "WORK"`), its bundled inputs
 (an [input.ID] with `bundle = true`, found beside it by its `name`) and its
-lock (FILE.lock/sha256/<hex>), which `upcli recipe pin` writes together
+lock (FILE.lock/sha256/<hex>), which `unemu recipe pin` writes together
 with `digest`.
 
 This module reads only what the pipeline needs: the identity table, [media]
 or [firmware], with `name` (the repository), `release` (optional),
 `revision` and `digest` (absent: a draft); and `work`, the names of the
-bundled inputs and the licence expression. upcli's `recipe check` is the
+bundled inputs and the licence expression. unemu's `recipe check` is the
 full check. The ref is NAME:TAG; the tag is <release>-r<revision>, or
 r<revision> without a release (unemupc's decision-38), and the release
 alone is the alias that names the newest revision. This pipeline publishes
@@ -25,13 +25,13 @@ Private recipes under private/media/ and private/firmware/ are checked
 statically only: no licence statement, no input URLs, only our own small
 bundled texts. Authorship of those texts is a review requirement.
 
-`check` runs `upcli recipe check` over the files and folders given
-(default: recipes/) and passes only when upcli prints an ok line for every
+`check` runs `unemu recipe check` over the files and folders given
+(default: recipes/) and passes only when unemu prints an ok line for every
 recipe and every work file a recipe names, and reports no finding, no drift
 (a work file that now differs from a pinned recipe's lock: a build writes
 the lock's value, so the edit would never reach a set until a new pin) and
-no draft (a recipe without `digest`, which is never published). upcli runs
-after its commit check (lib/upcli.py), with an environment of its own.
+no draft (a recipe without `digest`, which is never published). unemu runs
+after its commit check (lib/unemu.py), with an environment of its own.
 Exit status: 0 passed, 1 refused, 2 usage error.
 
 Standard library only. Run it with -I.
@@ -57,7 +57,7 @@ WORK_SUFFIX = ".work.toml"
 LOCK_SUFFIX = ".lock"
 PREFIXES = {"media": "unemu/media/", "firmware": "unemu/firmware/"}
 PRIVATE_PREFIXES = {"media": "private/media/", "firmware": "private/firmware/"}
-# upcli's recipe bundle limit (§6.8); text is UTF-8 without NUL (§6.13).
+# unemu's recipe bundle limit (§6.8); text is UTF-8 without NUL (§6.13).
 MAX_BUNDLED_TEXT = 1024 * 1024
 # OCI distribution: a repository name of lower-case components, a tag.
 COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
@@ -68,7 +68,7 @@ TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
 PART = re.compile(r"[a-z0-9]+(?:[._][a-z0-9]+)*")
 REVISION_PART = re.compile(r"r([1-9][0-9]*)")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-# What upcli recipe check prints for a work file that differs from a lock,
+# What unemu recipe check prints for a work file that differs from a lock,
 # and for a file that passed: `FILE: ok, KIND...`.
 DRIFT = "drift:"
 OK_LINE = re.compile(r"(.+): ok, ")
@@ -166,6 +166,8 @@ def parse(path, data):
         document = tomllib.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise Refusal(f"{path}: not a TOML recipe: {error}") from None
+    if document.get("recipe") != "1.0":
+        raise Refusal(f'{path}: recipe must be "1.0" (the frozen format)')
     tables = [name for name in ("media", "firmware", "machine") if name in document]
     if tables != [kind]:
         raise Refusal(f"{path}: a .{kind}.toml file must have one identity table, [{kind}], not {tables}")
@@ -228,7 +230,7 @@ def parse(path, data):
 def check_private_bundle(root, recipe):
     """Check bundled bytes; authorship still needs human review.
 
-    upcli checks their declared size and hash, and the lock, statically.
+    unemu checks their declared size and hash, and the lock, statically.
     Never read any user-supplied input from a library here.
     """
     if not recipe.private:
@@ -327,7 +329,7 @@ def selected(recipes, root, operands):
 
 
 def files_of(root, recipes):
-    """The files upcli's check must pass for RECIPES: each recipe file and
+    """The files unemu's check must pass for RECIPES: each recipe file and
     the work file it names, as absolute paths."""
     files = []
     for recipe in recipes:
@@ -338,7 +340,7 @@ def files_of(root, recipes):
 
 
 def not_passed(stdout, files):
-    """The FILES that no `FILE: ok, ...` line of upcli recipe check's STDOUT
+    """The FILES that no `FILE: ok, ...` line of unemu recipe check's STDOUT
     names (paths compared once resolved)."""
     passed = set()
     for line in stdout.splitlines():
@@ -349,24 +351,24 @@ def not_passed(stdout, files):
 
 
 def check(cli, root, operands, environ):
-    """upcli recipe check over OPERANDS (default: recipes/): 0 when it
+    """unemu recipe check over OPERANDS (default: recipes/): 0 when it
     passes, 1 with every reason printed."""
-    upcli = _module("upcli")
+    unemu = _module("unemu")
     try:
         recipes = selected(load(root), root, operands)
-        pin = upcli.read_pin(pathlib.Path(root) / upcli.PIN_FILE)
-    except (Refusal, upcli.Refusal) as refusal:
+        pin = unemu.read_pin(pathlib.Path(root) / unemu.PIN_FILE)
+    except (Refusal, unemu.Refusal) as refusal:
         print(f"refused: {refusal}", file=sys.stderr)
         return 1
     with tempfile.TemporaryDirectory(prefix="recipes-check.") as work:
         env = {"PATH": environ.get("PATH", os.defpath), "HOME": work, "TMPDIR": work, "LC_ALL": "C", "TZ": "UTC"}
         try:
-            upcli.check_cli(cli, pin.commit, env)
-        except upcli.Refusal as refusal:
+            unemu.check_cli(cli, pin.commit, env)
+        except unemu.Refusal as refusal:
             print(f"refused: {refusal}", file=sys.stderr)
             return 1
         paths = [str(pathlib.Path(root) / RECIPES)] if not operands else [os.path.abspath(o) for o in operands]
-        # upcli reports only the files it is given or finds below a folder
+        # unemu reports only the files it is given or finds below a folder
         # it is given: a work file of a recipe given as a file is added.
         for work_file in files_of(root, recipes):
             if not any(os.path.realpath(work_file) == os.path.realpath(given)
@@ -383,19 +385,19 @@ def check(cli, root, operands, environ):
     sys.stderr.write(done.stderr)
     reasons = []
     if done.returncode != 0:
-        reasons.append(f"upcli recipe check exited with status {done.returncode}")
+        reasons.append(f"unemu recipe check exited with status {done.returncode}")
     drift = [line.strip() for line in done.stdout.splitlines() if line.strip().startswith(DRIFT)]
     if drift:
         reasons.append(f"{len(drift)} drift lines: a work file differs from a lock; pin a new revision, "
                        "or put the work file back")
     missing = not_passed(done.stdout, files_of(root, recipes))
     if missing:
-        reasons.append("upcli printed no ok line for " + ", ".join(
+        reasons.append("unemu printed no ok line for " + ", ".join(
             pathlib.Path(f).relative_to(root).as_posix() for f in missing))
     drafts = [r.path for r in recipes if r.digest is None]
     if drafts:
         reasons.append("drafts, which are never published: " + ", ".join(drafts) + "; pin them "
-                       "(upcli recipe pin)")
+                       "(unemu recipe pin)")
     for reason in reasons:
         print(f"refused: {reason}", file=sys.stderr)
     if not reasons:
@@ -407,13 +409,13 @@ def main(argv=None, root=ROOT, environ=None):
     environ = dict(os.environ if environ is None else environ)
     parser = argparse.ArgumentParser(prog="lib/recipes.py", description="Check the recipe files.")
     commands = parser.add_subparsers(dest="command", required=True)
-    checking = commands.add_parser("check", help="upcli recipe check, refusing findings, drift and drafts")
-    checking.add_argument("--cli", default=environ.get("UPCLI"), help="the upcli binary (default: $UPCLI)")
+    checking = commands.add_parser("check", help="unemu recipe check, refusing findings, drift and drafts")
+    checking.add_argument("--cli", default=environ.get("UNEMU"), help="the unemu binary (default: $UNEMU)")
     checking.add_argument("paths", nargs="*", metavar="FILE|FOLDER")
     try:
         options = parser.parse_args(sys.argv[1:] if argv is None else argv)
         if not options.cli:
-            parser.error("--cli UPCLI (or $UPCLI) is required")
+            parser.error("--cli UNEMU (or $UNEMU) is required")
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 2
     return check(os.path.abspath(options.cli), root, options.paths, environ)

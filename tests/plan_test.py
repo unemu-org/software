@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Offline survey tests; the fake upcli accepts only recipe plan --json."""
+"""Offline survey tests; the fake unemu accepts only recipe plan --json."""
 
 import contextlib
 import copy
@@ -21,18 +21,18 @@ plan = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(plan)
 
 SHA = "a" * 64
-MEDIA = '''recipe = "0.1"
+MEDIA = '''recipe = "1.0"
 [media]
 name = "private/media/ibm-pc/demo"
 release = "1.0-720k"
 revision = 2
 '''
-FIRMWARE = '''recipe = "0.1"
+FIRMWARE = '''recipe = "1.0"
 [firmware]
 name = "unemu/firmware/ibm-pc/bios"
 revision = 1
 '''
-# The fields and statuses measured from upcli 0.0.3; notably `name` has no
+# The fields and statuses measured from unemu 0.0.4; notably `name` has no
 # tag and findings replace the usual inputs/outputs arrays on check failure.
 INPUT = {"form": "file", "found": None, "id": "archive", "ids": [],
          "name": "GAME.ZIP", "near_misses": [], "optional": False, "reason": None,
@@ -72,7 +72,7 @@ class Survey(unittest.TestCase):
         self.recipes.mkdir()
         self.config = self.root / "fake.json"
         self.log = self.root / "calls.jsonl"
-        self.cli = self.root / "upcli"
+        self.cli = self.root / "unemu"
         self.cli.write_text(FAKE_CLI.replace("@PYTHON@", sys.executable)
                             .replace("@CONFIG@", repr(str(self.config))).replace("@LOG@", repr(str(self.log))))
         self.cli.chmod(0o700)
@@ -205,7 +205,7 @@ class Survey(unittest.TestCase):
         self.assertEqual(rows[1]["findings"], ["finding 0", "finding 1", "finding 2"])
         self.assertIn("finding 0", self.run_plan(self.media)[1])
 
-    def test_upcli_errors_and_unrecognized_output_are_invalid_rows(self):
+    def test_unemu_errors_and_unrecognized_output_are_invalid_rows(self):
         for answer in ({"code": 2, "stderr": "bad config\n", "raw": "", "plan": {}},
                        {"code": 0, "raw": "{}", "plan": {}},
                        {"code": 0, "raw": "[]", "plan": {}},
@@ -266,11 +266,11 @@ class Survey(unittest.TestCase):
                 self.assertIn(str(preferences), command)
 
     def test_cli_environment_variable_and_path_lookup(self):
-        env = dict(self.env, UPCLI="upcli", PATH=str(self.root))
+        env = dict(self.env, UNEMU="unemu", PATH=str(self.root))
         code, _, stderr = self.run_plan("--json", self.media, env=env, default_cli=False)
         self.assertEqual((code, stderr), (0, ""))
 
-    def test_usage_errors_do_not_invoke_upcli(self):
+    def test_usage_errors_do_not_invoke_unemu(self):
         for args in (("--fetch",), ("--push",), (self.root / "absent",),
                      ("--library", self.root / "absent"), ("--store", self.media),
                      ("--config", self.root), (self.root / "empty",)):
@@ -280,7 +280,7 @@ class Survey(unittest.TestCase):
             self.assertEqual(self.calls(), [])
         self.assertEqual(self.run_plan(default_cli=False)[0], 2)
 
-    def test_cannot_run_upcli_is_nonzero(self):
+    def test_cannot_run_unemu_is_nonzero(self):
         self.cli.unlink()
         code, _, stderr = self.run_plan()
         self.assertEqual(code, 1)

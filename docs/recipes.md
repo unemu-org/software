@@ -2,13 +2,26 @@
 
 A recipe turns pinned upstream inputs into one media set or one firmware
 package, byte for byte the same on every run. It is a recipe file of
-`upcli`, the CLI of the pinned unemupc release (`upcli.toml`): TOML 1.0, an
+`unemu`, the family CLI of the pinned unemu release (`unemu.toml`): TOML 1.0, an
 ordered list of closed steps that start no process, inputs found by size
 and SHA-256, and a lock that pins every byte of the artifact it builds. The
-format is unemupc's (its decisions 33 to 39 and
-`backlog/docs/design/recipes.md`, recipe version `0.1`); the rules behind
+recipe format **1.0 is frozen** (unemupc decision-43). Its JSON Schema is
+the [recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+Both recipes and work files declare `recipe = "1.0"`; `"0.1"` is refused.
+The lock format, media types, annotations, work-file format and FAT defaults
+are unchanged, so existing output digests and lock bytes stay pinned. The rules behind
 our recipes (upstream bytes, licences, sources) are in
 [AGENTS.md](../AGENTS.md).
+
+For local work, `python3 -I lib/unemu.py fetch out/unemu` verifies the release
+archive and its `unemu` member against our own SHA-256 and size pins in
+`unemu.toml`, then checks the commit line. CI uses upstream `setup-unemu`
+pinned to the release commit: it checks the archive against the release's
+`SHA256SUMS` and runs `unemu --version` to check its `commit:` line, without
+checking our archive pins (the maintainer's decision of 2026-11-23).
+Update `unemu.toml` and the three workflows together when changing releases;
+the README check command tests their agreement. See
+[the pinned unemu](publishing.md#the-pinned-unemu).
 
 ## Where recipes live
 
@@ -21,7 +34,7 @@ our recipes (upstream bytes, licences, sources) are in
 | `recipes/firmware/<catalogue id>.firmware.toml` | one firmware package, `unemu/firmware/ibm-pc/<catalogue id>:rN` |
 | `recipes/private/media/<work>/<work>-<release>.media.toml` | a private media description, `private/media/ibm-pc/<work>:<release>-rN`, with its work file and our own bundled texts beside it |
 | `recipes/private/firmware/<catalogue id>.firmware.toml` | a private firmware description, `private/firmware/ibm-pc/<catalogue id>:rN` |
-| `<recipe file>.lock/sha256/<hex>` | the lock `upcli recipe pin` wrote beside the recipe |
+| `<recipe file>.lock/sha256/<hex>` | the lock `unemu recipe pin` wrote beside the recipe |
 
 A folder holds one work, because the work is the repository: a work file
 lies beside the recipes that name it, and the last component of a
@@ -38,10 +51,10 @@ belongs in the repository or lock. `bundle = true` is only for our own
 text: a regular file directly beside the recipe, not a link or a file set,
 at most 1 MiB, UTF-8 without NUL. The static check enforces the size, path
 and text limits; review must establish authorship. Users supply all title
-files from their own libraries and pin with `upcli recipe pin FILE
+files from their own libraries and pin with `unemu recipe pin FILE
 --library DIR`; no download of the title is permitted here.
 
-`python3 -I lib/recipes.py check --cli out/upcli/upcli` checks open and
+`python3 -I lib/recipes.py check --cli out/unemu/unemu` checks open and
 private recipes alike: the pinned CLI, every recipe and work file's `ok`
 line, no findings or drift, and a digest and valid lock for each recipe.
 It builds and fetches no input. `check.yml` runs that check on every recipe,
@@ -67,7 +80,7 @@ A media recipe (`*.media.toml`):
 
 | Table | What ours hold |
 | --- | --- |
-| `recipe`, `work` | `"0.1"`; the work's id, which names `<work>.work.toml` beside it |
+| `recipe`, `work` | `"1.0"`; the work's id, which names `<work>.work.toml` beside it |
 | `[media]` | `name` (the repository), `platform = "ibm-pc"`, `release`, `revision`, and `digest` once pinned |
 | `[title]` | the release's own fields: `version`, `edition`, `year`, `description`, `requirements`, and labels the work does not share |
 | `[license]` | `expression` (SPDX, or one `LicenseRef-`), `terms` (the extra holding the licence text) and, for copyleft content, `source` (the extra holding the corresponding source) |
@@ -94,7 +107,7 @@ How our recipes use the steps:
   archive's files, unmodified, in the archive's order (`order = "listed"`)
   and with the archive's times, written into the `unpack` member list;
   the volume label, serial and label time are the recipe's (Ken's
-  Labyrinth). The bytes are upcli's FAT builder's, with unemupc's own boot
+  Labyrinth). The bytes are unemu's FAT builder's, with unemupc's own boot
   sector, which reports a non-system disk and retries the boot.
 - **The licence index.** `licenses.txt`, our own CC0-1.0 text, is a
   bundled input; a `text` step gives it DOS line ends, and the extra
@@ -108,14 +121,14 @@ How our recipes use the steps:
 ids (`[ids]`: `wikidata`, `mobygames`, `igdb`) and `[needs]`. A recipe's
 own single values win, its lists of people replace the work's, labels are
 the union, and `synopsis` lives in the work file only (unemupc's
-decision-39). `upcli recipe show FILE` prints the merged record a build
+decision-39). `unemu recipe show FILE` prints the merged record a build
 writes.
 
 A pinned recipe builds its lock's record, never the work file's: an edit to
-a work file reaches a published set only with a new pin. `upcli recipe
+a work file reaches a published set only with a new pin. `unemu recipe
 check` reports such a difference as drift; `lib/recipes.py check` (and so
 CI) refuses it, so a work file never silently disagrees with what is
-published. It also refuses a run in which upcli prints no `ok` line for a
+published. It also refuses a run in which unemu prints no `ok` line for a
 recipe, or for a work file a recipe names.
 
 ## Metadata
@@ -134,14 +147,14 @@ the comments of each file.
 | package date | firmware `[package] date` | the date the ROM itself carries (its BIOS date or version string) |
 | board | firmware `[package.fits]` | what the firmware catalogue records; stating it changes no byte |
 
-upcli 0.0.3's recipe format has no keys for a package's provenance (how
+unemu 0.0.4's recipe format has no keys for a package's provenance (how
 the ROM was made, from where, at which revision) or for the licence of an
 extra other than the source archive; our packages need neither for now.
 
 ## Inputs
 
 An input is its size and SHA-256; its name, other names and URLs are hints.
-`upcli recipe build --fetch` downloads a missing input from its URLs in
+`unemu recipe build --fetch` downloads a missing input from its URLs in
 order (HTTPS only, at most its size) and checks it before any step reads
 it; a library (`--library DIR`) is searched by size and hash first,
 whatever the files are called. Nothing downloaded is ever executed.
@@ -175,25 +188,25 @@ nix develop --command bash recipes/media/freedos/source/build.sh
 
 `lib/plan.py` surveys every `*.media.toml` and `*.firmware.toml` under
 `recipes/`, or the files and folders given, by running the supplied
-upcli's `recipe plan FILE --json` once per recipe. It accepts private
+unemu's `recipe plan FILE --json` once per recipe. It accepts private
 recipes in `recipes/private/` and outside this repository too; it does not
 apply `lib/recipes.py`'s repository policy. Python 3.11 or later is required.
 
 ```sh
-python3 -I lib/plan.py --cli out/upcli/upcli --library /path/to/files
-python3 -I lib/plan.py --cli out/upcli/upcli recipes/firmware --json
-python3 -I lib/plan.py --cli out/upcli/upcli recipes/media/kenslab \
+python3 -I lib/plan.py --cli out/unemu/unemu --library /path/to/files
+python3 -I lib/plan.py --cli out/unemu/unemu recipes/firmware --json
+python3 -I lib/plan.py --cli out/unemu/unemu recipes/media/kenslab \
   --library /path/to/files --store /path/to/store --config /path/to/preferences.toml
 ```
 
-`--cli` defaults to `$UPCLI`. Unlike the publishing pipeline, the survey
-keeps your HOME and upcli preferences, including registered libraries;
+`--cli` defaults to `$UNEMU`. Unlike the publishing pipeline, the survey
+keeps your HOME and unemu preferences, including registered libraries;
 `--config FILE` chooses another preferences file. `--library DIR` is
 repeatable and adds to those libraries, and `--store DIR` chooses an
-existing store. upcli searches by size and SHA-256, including zip members,
+existing store. unemu searches by size and SHA-256, including zip members,
 the store and its download cache, bundled files beside the recipe, and
 libraries. The survey builds and downloads nothing, changes no images and
-contacts no registry. **Cache limitation:** upcli 0.0.3 may update its
+contacts no registry. **Cache limitation:** unemu 0.0.4 may update its
 library and decoded-content index caches in an existing store as its own
 bookkeeping; it has no option to disable those writes. The wrapper itself
 writes only its report to stdout. It keeps `LC_ALL=C` and `TZ=UTC`.
@@ -205,24 +218,24 @@ Each row names the recipe and its revision ref, with one of these statuses:
 | `ready` | Every needed input is local, or found members or locked output payloads replace the inputs that would make them. |
 | `needs --fetch` | Every missing required input has URLs; a build can try them with `--fetch`. Their availability is not tested. |
 | `missing` | At least one required input has neither a local copy nor URLs; its name, size, SHA-256 and any dump-database ids are listed. |
-| `invalid` | upcli refused the recipe (the first three findings are shown), or returned an unusable plan. |
+| `invalid` | unemu refused the recipe (the first three findings are shown), or returned an unusable plan. |
 
 Missing optional attachments do not prevent `ready`. A survey exits 0
 even with missing or invalid recipes; usage errors and inability to run
-upcli are nonzero. `--json` prints an array of rows (`recipe`, `refs`,
+unemu are nonzero. `--json` prints an array of rows (`recipe`, `refs`,
 `status`, `missing`, `findings`, `summary`, `warnings`) without the footer.
 `missing` holds the required inputs still needed, with their `input` id,
 `name`, `size`, `sha256`, dump `ids` and `urls`; file sets list their missing
-files individually. upcli's store and library read warnings are retained.
+files individually. unemu's store and library read warnings are retained.
 
 The text footer gives a build command with the survey's library, store and
 config options, and a push command targeting `private/...` on your own
 registry. For example, after a `ready` Ken's Labyrinth row:
 
 ```sh
-out/upcli/upcli recipe build recipes/media/kenslab/kenslab-2.01.media.toml \
+out/unemu/unemu recipe build recipes/media/kenslab/kenslab-2.01.media.toml \
   --library /path/to/files --store /path/to/store
-out/upcli/upcli image push unemu/media/ibm-pc/kenslab:2.01-r1 \
+out/unemu/unemu image push unemu/media/ibm-pc/kenslab:2.01-r1 \
   private/media/ibm-pc/kenslab:2.01-r1 --registry registry.example \
   --store /path/to/store --config /path/to/preferences.toml
 ```
@@ -234,14 +247,14 @@ availability, while the build still verifies bytes and the recipe lock.
 
 ## The lock
 
-`upcli recipe pin FILE` is the author's build: it builds the recipe as a
+`unemu recipe pin FILE` is the author's build: it builds the recipe as a
 draft, writes the artifact's manifest, config and metadata (a package: its
 README) into `FILE.lock/sha256/`, and its manifest digest into the recipe as
-`digest`. The lock holds no payload byte. Every later `upcli recipe build`
+`digest`. The lock holds no payload byte. Every later `unemu recipe build`
 makes the payload, checks each blob against the locked manifest, and
-publishes the locked manifest unchanged: a later upcli gives the pinned
+publishes the locked manifest unchanged: a later unemu gives the pinned
 digest whatever it would write itself, and a step that no longer writes the
-same bytes fails the build. `upcli recipe conformance` builds every pinned
+same bytes fails the build. `unemu recipe conformance` builds every pinned
 recipe from libraries alone, without finding anything instead of making it,
 and compares the digests.
 
@@ -266,33 +279,32 @@ For a non-open title use `recipes/private/` and the static-only procedure
 above; the build and publication steps below are for open recipes.
 
 1. Write the recipe in `recipes/media/<work>/` (with its work file) or
-   `recipes/firmware/`. `upcli recipe scaffold FILE...` prints the input
+   `recipes/firmware/`. `unemu recipe scaffold FILE...` prints the input
    tables of files you have, and an archive's member list with sizes,
    hashes and times.
-2. Check it: `upcli recipe check FILE`, then `upcli recipe show FILE`.
+2. Check it: `unemu recipe check FILE`, then `unemu recipe show FILE`.
 3. Build the draft into a scratch store and review the result:
-   `upcli recipe build FILE --fetch --store DIR`, then `upcli image media
+   `unemu recipe build FILE --fetch --store DIR`, then `unemu image media
    show` (or `image firmware show`) of the tag it prints.
-4. Pin it with the pinned upcli, in a fresh store: `upcli recipe pin FILE
+4. Pin it with the pinned unemu, in a fresh store: `unemu recipe pin FILE
    --fetch --store DIR`.
 5. Pin a copy of the draft again from the first store's downloads alone
    (`--library DIR/cache/downloads`, a new store): the recipe file and its
    lock must be byte-identical (`diff -r`).
-6. `python3 -I lib/recipes.py check --cli UPCLI` and the dry run,
-   `python3 -I lib/publish.py --cli UPCLI --fetch FILE`: every row must
+6. `python3 -I lib/recipes.py check --cli UNEMU` and the dry run,
+   `python3 -I lib/publish.py --cli UNEMU --fetch FILE`: every row must
    read `dry run`.
 
-Run upcli with a fresh `HOME`, `LC_ALL=C` and `TZ=UTC`, as lib/publish.py
+Run unemu with a fresh `HOME`, `LC_ALL=C` and `TZ=UTC`, as lib/publish.py
 does. See [publishing.md](publishing.md) for the pipeline and the pinned
-upcli.
+unemu.
 
 ## Recipes on the registry
 
-upcli can publish a pinned recipe as an artifact of its own
-(`upcli recipe push`, to `unemu/recipes/<kind>/ibm-pc/<name>:<tag>`, the
+unemu can publish a pinned recipe as an artifact of its own
+(`unemu recipe push`, to `unemu/recipes/<kind>/ibm-pc/<name>:<tag>`, the
 recipe file, its work file, its bundled texts and its lock, no payload).
-unemupc publishes no recipe before its recipe format is frozen (its
-decision-35, point 8), and neither does this repository: the sets and
-packages are published, their recipes are not yet. Publishing them will
-need a registry account that may write `unemu/recipes/**`, which is the
-maintainer's step.
+Recipe format 1.0 is frozen (unemupc decision-43). Publishing recipe
+artifacts still requires the maintainer's later decision and an account
+that may write `unemu/recipes/**`. This migration adds no recipe push step;
+the workflows continue to publish only open sets and packages.

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The pinned unemupc CLI, upcli: its pin (upcli.toml), the commit a upcli
+"""The pinned unemu CLI, unemu: its pin (unemu.toml), the commit an unemu
 binary reports, and the pinned release binary.
 
-    python3 -I lib/upcli.py fetch [--triple TRIPLE] [--cache DIR] OUT_DIR
+    python3 -I lib/unemu.py fetch [--triple TRIPLE] [--cache DIR] OUT_DIR
 
-    OUT_DIR          a new directory for the binary, OUT_DIR/upcli; it must
+    OUT_DIR          a new directory for the binary, OUT_DIR/unemu; it must
                      not exist yet
     --triple TRIPLE  the release archive to take it from (default: the
                      host's: x86_64-unknown-linux-gnu on Linux x86_64,
@@ -12,17 +12,17 @@ binary reports, and the pinned release binary.
                      triple is refused). The binary must run on this host:
                      its --version is checked.
     --cache DIR      where the downloaded archive is kept (default:
-                     cache/upcli/)
+                     cache/unemu/)
 
-upcli.toml pins one unemupc release: the commit its tag points to, the tag,
+unemu.toml pins one unemu release: the commit its tag points to, the tag,
 the version, and for each platform the SHA-256 and size of the release
-archive and of the upcli inside it. lib/publish.py reads it with read_pin
+archive and of the unemu inside it. lib/publish.py reads it with read_pin
 and checks the binary it is given with check_cli, as fetch does here.
 
 fetch is the one place this repository runs a downloaded program, under the
 one exception AGENTS.md states to "never execute anything from a download":
 
- 1. The archive upcli.toml pins for TRIPLE, unemupc-<version>-<triple>.tar.gz,
+ 1. The archive unemu.toml pins for TRIPLE, unemu-<version>-<triple>.tar.gz,
     is read into memory once, and those bytes are checked against the pinned
     size and SHA-256 (never against the release's SHA256SUMS) and are the
     bytes everything below uses. A cached copy is read and checked that way
@@ -30,21 +30,21 @@ one exception AGENTS.md states to "never execute anything from a download":
     archive is downloaded from the release over HTTPS (curl, with the flags
     and limits of lib/source.sh's fetch) into a temporary directory, and
     only once checked are its bytes written into the cache.
- 2. Those bytes give up one member only, unemupc-<version>-<triple>/upcli:
+ 2. Those bytes give up one member only, unemu-<version>-<triple>/unemu:
     it must be the archive's one member of that name, a regular file (no
     symbolic or hard link), and its bytes must have the size and SHA-256
-    upcli.toml pins for the binary. An archive that names any member by an
+    unemu.toml pins for the binary. An archive that names any member by an
     absolute path or with a '..' component is refused whole. tarfile never
     writes a file itself here: the checked bytes are written into
-    OUT_DIR/upcli, mode 0755.
- 3. OUT_DIR/upcli --version runs with an environment of its own (PATH, a
+    OUT_DIR/unemu, mode 0755.
+ 3. OUT_DIR/unemu --version runs with an environment of its own (PATH, a
     fresh HOME and TMPDIR, LC_ALL=C, TZ=UTC) in a scratch directory; the
     commit line of its stdout must name the pinned commit (check_cli). Until
     then, and if anything fails, nothing else runs the binary, and a failure
     removes OUT_DIR again.
 
 The binary's path goes to stdout, progress to stderr. Exit status: 0 when
-OUT_DIR/upcli is the pinned upcli, 1 on a refusal, 2 for a usage error.
+OUT_DIR/unemu is the pinned unemu, 1 on a refusal, 2 for a usage error.
 
 Standard library only (tomllib, Python 3.11 or later), and curl for the
 download. Run it with -I.
@@ -70,10 +70,10 @@ import zlib
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 
-PIN_FILE = "upcli.toml"
+PIN_FILE = "unemu.toml"
 # Where a release's assets are: <RELEASES>/<tag>/<file>.
-RELEASES = "https://github.com/unemu-org/unemupc/releases/download"
-# The hosts a unemupc release has an archive for, by (platform.system(),
+RELEASES = "https://github.com/unemu-org/unemu/releases/download"
+# The hosts an unemu release has an archive for, by (platform.system(),
 # platform.machine()), and the archive's target triple.
 HOSTS = {
     ("Linux", "x86_64"): "x86_64-unknown-linux-gnu",
@@ -84,43 +84,43 @@ COMMIT = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 # A tag or a version: a plain name, safe in a URL path and a file name.
 NAME = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
-# The line a release build's `upcli --version` names its commit on
-# (unemupc crates/platforms/src/lib.rs, licence_notice and commit_line, from
+# The line a release build's `unemu --version` names its commit on
+# (unemu crates/platforms/src/lib.rs, licence_notice and commit_line, from
 # UNEMUPC_SOURCE_COMMIT at compile time): every line of stdout that
 # starts with COMMIT_PREFIX counts, and it must be exactly COMMIT_LINE.
 COMMIT_PREFIX = "commit:"
 COMMIT_LINE = re.compile(r"commit: ([0-9a-f]{40})")
 PIN_KEYS = ("commit", "tag", "version", "archive")
-ARCHIVE_KEYS = ("file", "sha256", "size", "upcli_sha256", "upcli_size")
+ARCHIVE_KEYS = ("file", "sha256", "size", "unemu_sha256", "unemu_size")
 MAX_ARCHIVE = 512 * 1024 * 1024
 MAX_BINARY = 256 * 1024 * 1024
 # The download's limits, as lib/source.sh's fetch sets them.
 CONNECT_TIMEOUT = 20
 FETCH_MAX_TIME = 1800
-# How long `upcli --version` may take.
+# How long `unemu --version` may take.
 VERSION_TIMEOUT = 60
 
 
 class Refusal(Exception):
-    """Why the pin, an archive or a upcli binary is refused."""
+    """Why the pin, an archive or an unemu binary is refused."""
 
 
 @dataclasses.dataclass(frozen=True)
 class Archive:
-    """One platform's release archive, as upcli.toml pins it, and the upcli
+    """One platform's release archive, as unemu.toml pins it, and the unemu
     inside it."""
 
     triple: str
     file: str
     sha256: str
     size: int
-    upcli_sha256: str
-    upcli_size: int
+    unemu_sha256: str
+    unemu_size: int
 
 
 @dataclasses.dataclass(frozen=True)
 class Pin:
-    """The unemupc release upcli.toml pins."""
+    """The unemu release unemu.toml pins."""
 
     commit: str
     tag: str
@@ -128,8 +128,8 @@ class Pin:
     archives: dict
 
     def member(self, triple):
-        """The archive member that is upcli."""
-        return f"unemupc-{self.version}-{triple}/upcli"
+        """The archive member that is unemu."""
+        return f"unemu-{self.version}-{triple}/unemu"
 
     def url(self, triple, base=RELEASES):
         return f"{base}/{self.tag}/{self.archives[triple].file}"
@@ -169,9 +169,9 @@ def parse_pin(data, where=PIN_FILE):
     """A Pin from the parsed TOML DATA: exactly the keys commit (40
     lower-case hex digits), tag and version (plain names) and archive, a
     table of one or more tables named by a supported target triple, each
-    with exactly file (unemupc-<version>-<triple>.tar.gz), sha256 and size
+    with exactly file (unemu-<version>-<triple>.tar.gz), sha256 and size
     (the archive's: 64 lower-case hex digits, 1 to MAX_ARCHIVE bytes), and
-    upcli_sha256 and upcli_size (its upcli member's, 1 to MAX_BINARY bytes).
+    unemu_sha256 and unemu_size (its unemu member's, 1 to MAX_BINARY bytes).
     Anything else is a Refusal; TOML itself refuses a key given twice."""
     if not isinstance(data, dict):
         raise Refusal(f"{where}: not a table")
@@ -190,15 +190,15 @@ def parse_pin(data, where=PIN_FILE):
         if not isinstance(table, dict):
             raise Refusal(f"{here}: not a table")
         _keys(table, ARCHIVE_KEYS, here)
-        name = f"unemupc-{version}-{triple}.tar.gz"
+        name = f"unemu-{version}-{triple}.tar.gz"
         if table["file"] != name:
             raise Refusal(f"{here}: file must be {name!r}, not {table['file']!r}")
         archives[triple] = Archive(
             triple, name,
             _string(table, "sha256", SHA256, "64 lower-case hex digits", here),
             _size(table, "size", MAX_ARCHIVE, here),
-            _string(table, "upcli_sha256", SHA256, "64 lower-case hex digits", here),
-            _size(table, "upcli_size", MAX_BINARY, here),
+            _string(table, "unemu_sha256", SHA256, "64 lower-case hex digits", here),
+            _size(table, "unemu_size", MAX_BINARY, here),
         )
     return Pin(commit, tag, version, archives)
 
@@ -220,7 +220,7 @@ def read_pin(path):
 
 
 def reported_commit(text):
-    """The commit on the commit line of TEXT, what `upcli --version`
+    """The commit on the commit line of TEXT, what `unemu --version`
     printed on stdout, or None when no line starts with 'commit:'. Lines
     end at '\\n' only (check_cli has made each CRLF '\\n' already; a lone
     '\\r' ends no line). That line must be the only one, and exactly
@@ -231,10 +231,10 @@ def reported_commit(text):
     if not lines:
         return None
     if len(lines) > 1:
-        raise Refusal(f"upcli --version prints {len(lines)} commit lines; a upcli prints one")
+        raise Refusal(f"unemu --version prints {len(lines)} commit lines; an unemu prints one")
     found = COMMIT_LINE.fullmatch(lines[0])
     if not found:
-        raise Refusal(f"upcli --version prints the commit line {lines[0]!r}; expected 'commit: ' and "
+        raise Refusal(f"unemu --version prints the commit line {lines[0]!r}; expected 'commit: ' and "
                       "40 lower-case hex digits")
     return found.group(1)
 
@@ -255,12 +255,12 @@ def check_cli(cli, commit, env, timeout=VERSION_TIMEOUT):
     decoded by output_text, so the lines reported_commit sees end at '\\n'
     only. A Refusal when the scratch directory cannot be made, or CLI
     cannot run, fails, takes longer than TIMEOUT seconds, prints anything
-    but UTF-8, or names no commit or another one. A upcli without a commit
+    but UTF-8, or names no commit or another one. An unemu without a commit
     line is refused too: a non-release build prints one only when built
     with UNEMUPC_SOURCE_COMMIT set."""
     tmpdir = env.get("TMPDIR")
     try:
-        scratch = tempfile.TemporaryDirectory(prefix="upcli-cwd.", dir=tmpdir, ignore_cleanup_errors=True)
+        scratch = tempfile.TemporaryDirectory(prefix="unemu-cwd.", dir=tmpdir, ignore_cleanup_errors=True)
     except OSError as error:
         raise Refusal(f"cannot make a scratch directory for {cli} --version in "
                       f"{tmpdir or 'the temporary directory'}: {error.strerror or error}") from None
@@ -281,7 +281,7 @@ def check_cli(cli, commit, env, timeout=VERSION_TIMEOUT):
     if reported is None:
         raise Refusal(
             f"{cli} --version prints no commit line, so it cannot be checked against {PIN_FILE}: use "
-            "the pinned release's upcli (lib/upcli.py fetch), or build it at the pinned commit with "
+            "the pinned release's unemu (lib/unemu.py fetch), or build it at the pinned commit with "
             "UNEMUPC_SOURCE_COMMIT set to that commit"
         )
     if reported != commit:
@@ -300,8 +300,8 @@ def host_triple(system=None, machine=None):
     machine = platform.machine() if machine is None else machine
     triple = HOSTS.get((system, machine))
     if triple is None:
-        raise Refusal(f"unemupc releases have no archive for this host ({system} {machine}); "
-                      f"they have {', '.join(TRIPLES)}. Build upcli from source at the pinned commit instead")
+        raise Refusal(f"unemu releases have no archive for this host ({system} {machine}); "
+                      f"they have {', '.join(TRIPLES)}. Build unemu from source at the pinned commit instead")
     return triple
 
 
@@ -352,7 +352,7 @@ def curl_command(url, archive, part, base):
 def download(url, archive, environ, base):
     """The checked bytes of the archive at URL, downloaded into a temporary
     directory that is removed afterwards."""
-    with tempfile.TemporaryDirectory(prefix="upcli-download.") as scratch:
+    with tempfile.TemporaryDirectory(prefix="unemu-download.") as scratch:
         part = os.path.join(scratch, archive.file)
         try:
             done = subprocess.run(curl_command(url, archive, part, base), stdin=subprocess.DEVNULL,
@@ -416,13 +416,13 @@ def member_bytes(data, member, archive):
                 kind = ("a symbolic link" if info.issym() else "a hard link" if info.islnk()
                         else f"of tar type {info.type!r}")
                 raise Refusal(f"the member {member} is {kind}, not a regular file")
-            if info.size != archive.upcli_size:
-                raise Refusal(f"the member {member} is {info.size} bytes; {PIN_FILE} pins {archive.upcli_size}")
+            if info.size != archive.unemu_size:
+                raise Refusal(f"the member {member} is {info.size} bytes; {PIN_FILE} pins {archive.unemu_size}")
             body = tar.extractfile(info).read(info.size + 1)
     except (tarfile.TarError, EOFError, OSError, zlib.error) as error:
         raise Refusal(f"not a readable gzip tar archive: {error}") from None
     try:
-        check_bytes(body, archive.upcli_size, archive.upcli_sha256)
+        check_bytes(body, archive.unemu_size, archive.unemu_sha256)
     except Refusal as refusal:
         raise Refusal(f"the member {member}: {refusal}") from None
     return body
@@ -437,11 +437,11 @@ def write_binary(body, dest):
 
 
 def fetch(pin, triple, out_dir, cache_dir, environ, base=RELEASES):
-    """The pinned upcli for TRIPLE in the new directory OUT_DIR (see the
+    """The pinned unemu for TRIPLE in the new directory OUT_DIR (see the
     module's description); its path. BASE is where the releases are (the
     tests serve them from file://)."""
     if triple not in TRIPLES:
-        raise Refusal(f"unemupc releases have no archive for {triple!r}; they have {', '.join(TRIPLES)}")
+        raise Refusal(f"unemu releases have no archive for {triple!r}; they have {', '.join(TRIPLES)}")
     if triple not in pin.archives:
         raise Refusal(f"{PIN_FILE} pins no archive for {triple}")
     archive = pin.archives[triple]
@@ -449,7 +449,7 @@ def fetch(pin, triple, out_dir, cache_dir, environ, base=RELEASES):
     if os.path.lexists(out_dir):
         raise Refusal(f"{out_dir} exists; give a new directory")
     cached = os.path.join(os.path.abspath(cache_dir), archive.file)
-    log(f"{PIN_FILE}: unemupc {pin.tag}, commit {pin.commit}")
+    log(f"{PIN_FILE}: unemu {pin.tag}, commit {pin.commit}")
     if os.path.lexists(cached):
         log(f"cached {cached}")
         try:
@@ -465,12 +465,12 @@ def fetch(pin, triple, out_dir, cache_dir, environ, base=RELEASES):
     log(f"{archive.file}: {archive.size} bytes, SHA-256 {archive.sha256}, as pinned")
     member = pin.member(triple)
     body = member_bytes(data, member, archive)
-    log(f"{member}: {archive.upcli_size} bytes, SHA-256 {archive.upcli_sha256}, as pinned")
+    log(f"{member}: {archive.unemu_size} bytes, SHA-256 {archive.unemu_sha256}, as pinned")
     os.mkdir(out_dir, 0o755)
     try:
-        binary = os.path.join(out_dir, "upcli")
+        binary = os.path.join(out_dir, "unemu")
         write_binary(body, binary)
-        with tempfile.TemporaryDirectory(prefix="upcli-version.") as scratch:
+        with tempfile.TemporaryDirectory(prefix="unemu-version.") as scratch:
             os.mkdir(os.path.join(scratch, "home"))
             os.mkdir(os.path.join(scratch, "tmp"))
             env = {
@@ -484,7 +484,7 @@ def fetch(pin, triple, out_dir, cache_dir, environ, base=RELEASES):
     except BaseException:
         shutil.rmtree(out_dir, ignore_errors=True)
         raise
-    log(f"upcli --version reports commit {pin.commit}, as pinned")
+    log(f"unemu --version reports commit {pin.commit}, as pinned")
     return binary
 
 
@@ -492,13 +492,13 @@ def main(argv=None, root=ROOT, environ=None, base=RELEASES, host=None):
     """The command line; HOST, a (system, machine) pair, stands in for
     this host's in the tests."""
     environ = dict(os.environ if environ is None else environ)
-    parser = argparse.ArgumentParser(prog="lib/upcli.py", description="The pinned unemupc CLI, upcli.")
+    parser = argparse.ArgumentParser(prog="lib/unemu.py", description="The pinned unemu CLI, unemu.")
     commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
     fetch_parser = commands.add_parser(
-        "fetch", help="download the pinned release archive, check it and take upcli out of it")
+        "fetch", help="download the pinned release archive, check it and take unemu out of it")
     fetch_parser.add_argument("--triple", help="the archive's target triple (default: the host's)")
-    fetch_parser.add_argument("--cache", help="where the archive is kept (default: cache/upcli/)")
-    fetch_parser.add_argument("out_dir", metavar="OUT_DIR", help="a new directory for OUT_DIR/upcli")
+    fetch_parser.add_argument("--cache", help="where the archive is kept (default: cache/unemu/)")
+    fetch_parser.add_argument("out_dir", metavar="OUT_DIR", help="a new directory for OUT_DIR/unemu")
     try:
         options = parser.parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as stop:
@@ -507,7 +507,7 @@ def main(argv=None, root=ROOT, environ=None, base=RELEASES, host=None):
     try:
         pin = read_pin(root / PIN_FILE)
         triple = options.triple or host_triple(*(host or (None, None)))
-        cache = options.cache or root / "cache" / "upcli"
+        cache = options.cache or root / "cache" / "unemu"
         binary = fetch(pin, triple, options.out_dir, cache, environ, base)
     except Refusal as refusal:
         log(f"refused: {refusal}")

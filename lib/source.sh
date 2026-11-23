@@ -2,7 +2,7 @@
 # shellcheck shell=bash
 #
 # The shared steps of the scripts that make a prepared input: a file a
-# recipe takes by size and SHA-256 that upcli's recipe steps cannot make
+# recipe takes by size and SHA-256 that unemu's recipe steps cannot make
 # (docs/recipes.md). Today that is one script,
 # recipes/media/freedos/source/build.sh, which makes the FreeDOS source
 # archive. A script pins its inputs, sources this file and calls the helpers

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Survey local recipe plans with upcli (Python 3.11+, standard library only).
+"""Survey local recipe plans with unemu (Python 3.11+, standard library only).
 
 Only `recipe plan FILE --json` is invoked. The user's HOME and preferences
-are preserved; upcli may update its index caches in an existing store.
+are preserved; unemu may update its index caches in an existing store.
 It builds, downloads and changes no image, and contacts no registry.
 """
 
@@ -53,9 +53,9 @@ def display_path(path):
 
 
 def output_refs(path):
-    """Plan 0.0.3 supplies the repository name, but no release or tag.
+    """Plan in unemu 0.0.4 supplies the repository name, but no release or tag.
 
-    Read only the identity here; upcli performs the recipe check, including
+    Read only the identity here; unemu performs the recipe check, including
     private namespaces. Do not use lib/recipes.py's publication policy.
     """
     try:
@@ -71,8 +71,8 @@ def output_refs(path):
 
 
 def plan_recipe(cli, path, options, env):
-    """The single per-recipe call; replace here when upcli gains batch plans
-    (upcli recipe survey, upc-5pw.113.26 in unemupc)."""
+    """The single per-recipe call; replace here when unemu gains batch plans
+    (unemu recipe survey, upc-5pw.113.26 in unemupc)."""
     return subprocess.run([cli, "recipe", "plan", str(path), "--json", *options],
                           stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8",
                           errors="replace", env=env, check=False)
@@ -122,9 +122,9 @@ def row_for(path, done):
                         row["warnings"].append(f"{library['path']}: {failure['path']}: {failure['error']}")
     except (ValueError, KeyError, TypeError, AttributeError):
         row["status"] = "invalid"
-        row["findings"] = ["unrecognized upcli plan JSON"]
+        row["findings"] = ["unrecognized unemu plan JSON"]
     if row["status"] == "invalid" and not row["findings"]:
-        row["findings"] = [f"upcli recipe plan exited with status {done.returncode}"]
+        row["findings"] = [f"unemu recipe plan exited with status {done.returncode}"]
     if done.stderr.strip():
         row["warnings"].extend(done.stderr.strip().splitlines()[:3])
     return row
@@ -170,19 +170,19 @@ def table(rows, cli, options):
 def main(argv=None, root=ROOT, environ=None):
     env = dict(os.environ if environ is None else environ)
     parser = argparse.ArgumentParser(
-        prog="lib/plan.py", description="Survey recipes using local files and your upcli preferences.",
-        epilog="Runs only upcli recipe plan: no builds, downloads, image changes or registry access. "
-               "upcli may update index caches in an existing store. HOME and preferences are preserved.")
+        prog="lib/plan.py", description="Survey recipes using local files and your unemu preferences.",
+        epilog="Runs only unemu recipe plan: no builds, downloads, image changes or registry access. "
+               "unemu may update index caches in an existing store. HOME and preferences are preserved.")
     parser.add_argument("paths", nargs="*", metavar="FILE|FOLDER", help="default: all recipes under recipes/")
-    parser.add_argument("--cli", default=env.get("UPCLI"), metavar="PATH", help="upcli binary (default: $UPCLI)")
+    parser.add_argument("--cli", default=env.get("UNEMU"), metavar="PATH", help="unemu binary (default: $UNEMU)")
     parser.add_argument("--library", action="append", default=[], metavar="DIR", help="extra library (repeatable)")
-    parser.add_argument("--store", metavar="DIR", help="existing store (default: upcli's default store)")
-    parser.add_argument("--config", metavar="FILE", help="upcli preferences (default: the user's own)")
+    parser.add_argument("--store", metavar="DIR", help="existing store (default: unemu's default store)")
+    parser.add_argument("--config", metavar="FILE", help="unemu preferences (default: the user's own)")
     parser.add_argument("--json", action="store_true", help="print rows as JSON, without the footer")
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
         if not args.cli:
-            parser.error("--cli PATH (or $UPCLI) is required")
+            parser.error("--cli PATH (or $UNEMU) is required")
         paths = select(args.paths, pathlib.Path(root))
         options = []
         for flag, values in (("--library", args.library), ("--store", [args.store] if args.store else []),

@@ -16,7 +16,7 @@ one path per line in path order (with --json, as one JSON list):
     it names (WORK.work.toml beside it); a deleted recipe is not selected,
     since it is no longer at HEAD;
   - a change to a shared input selects every recipe: lib/ (the pipeline and
-    its helpers), upcli.toml (the CLI that builds and checks every recipe)
+    its helpers), unemu.toml (the CLI that builds and checks every recipe)
     and .github/workflows/ (the CI steps that build, compare and dry-run
     them);
   - anything else selects nothing: docs/ and the other documentation,
@@ -81,7 +81,7 @@ def _module(name):
 recipes = _module("recipes")
 
 # A change under any of these selects every recipe: a directory ends in /.
-SHARED = ("lib/", "upcli.toml", ".github/workflows/")
+SHARED = ("lib/", "unemu.toml", ".github/workflows/")
 # ... and every prepared-input script.
 SHARED_SOURCES = ("lib/source.sh", "flake.nix", "flake.lock", ".github/workflows/")
 SOURCE_SCRIPT = "source/build.sh"

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The checks of every pull request and every push to main, and a weekly cold
-# run: the README's check command; upcli's check of every recipe, which
+# run: the README's check command; unemu's check of every recipe, which
 # refuses drift and drafts too; each recipe the change touches
 # (lib/changed.py) built against its lock from downloads, then built again
-# from those inputs alone by upcli's conformance run; and, when its inputs
+# from those inputs alone by unemu's conformance run; and, when its inputs
 # change and every week, the script that makes the FreeDOS source archive.
 # No secrets, no environment, no registry read or write: fork pull requests
 # run all of it. See docs/publishing.md.
@@ -85,7 +85,7 @@ jobs:
     timeout-minutes: 90
     defaults:
       run:
-        # The runner's own bash and Python: upcli builds the recipes, and
+        # The runner's own bash and Python: unemu builds the recipes, and
         # nothing of them needs Nix.
         shell: bash -euo pipefail {0}
     env:
@@ -100,16 +100,24 @@ jobs:
           python3 -I -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else
             "lib/ needs Python 3.11 or later (tomllib); this runner has " + sys.version.split()[0])'
 
-      - name: Fetch the pinned upcli
-        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+      # The action checks the release archive against its SHA256SUMS,
+      # then runs unemu --version and checks commit:, not our archive pins.
+      - name: Install unemu
+        id: unemu
+        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        with:
+          version: v0.0.4
+          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
 
       # Every recipe, including private ones, whatever the build selection:
       # a finding, drift (a work file
       # that differs from a lock) or a draft fails the check.
       - name: Check every recipe
-        run: python3 -I lib/recipes.py check --cli "$RUNNER_TEMP/upcli/upcli"
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
+        run: python3 -I lib/recipes.py check --cli "$UNEMU"
 
-      # Downloads only, by SHA-256; upcli checks every input it takes from
+      # Downloads only, by SHA-256; unemu checks every input it takes from
       # here against its pin, so the cache never decides a byte. The weekly
       # run goes without it.
       - name: Download cache
@@ -120,12 +128,14 @@ jobs:
           key: inputs-${{ hashFiles('recipes/**/*.media.toml', 'recipes/**/*.firmware.toml') }}
           restore-keys: inputs-
 
-      # Each selected recipe built into a fresh store: upcli downloads what
+      # Each selected recipe built into a fresh store: unemu downloads what
       # is missing from the URLs its recipe pins, builds every byte and
       # compares it with the lock; then the show, the guard's dry run and
       # the digest pin (lib/publish.py's dry run, which reads no registry).
       - name: Build the selected recipes against their locks
         if: env.SELECTION != '[]'
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
         run: |
           python3 -I -c 'import json, sys; print(end="".join(s + "\0" for s in json.loads(sys.argv[1])))' \
             "$SELECTION" > "$RUNNER_TEMP/selection"
@@ -147,7 +157,7 @@ jobs:
           mkdir -p inputs
           prune
           status=0
-          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --fetch --library inputs \
+          python3 -I lib/publish.py --cli "$UNEMU" --fetch --library inputs \
             --store "$RUNNER_TEMP/store-1" -- "${recipes[@]}" > "$RUNNER_TEMP/summary.txt" || status=$?
           cat "$RUNNER_TEMP/summary.txt"
           {
@@ -168,10 +178,12 @@ jobs:
       # again and must give the pinned digest.
       - name: Build them again from the inputs alone
         if: env.SELECTION != '[]'
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
         run: |
           mapfile -d '' -t recipes < "$RUNNER_TEMP/selection"
           mkdir "$RUNNER_TEMP/home"
-          HOME="$RUNNER_TEMP/home" LC_ALL=C TZ=UTC "$RUNNER_TEMP/upcli/upcli" recipe conformance \
+          HOME="$RUNNER_TEMP/home" LC_ALL=C TZ=UTC "$UNEMU" recipe conformance \
             "${recipes[@]}" --library inputs --store "$RUNNER_TEMP/store-2"
 
   source:
@@ -212,20 +224,28 @@ jobs:
             bash "$script"
           done
 
-      - name: Fetch the pinned upcli
-        run: python3 -I lib/upcli.py fetch "$RUNNER_TEMP/upcli"
+      # The action checks the release archive against its SHA256SUMS,
+      # then runs unemu --version and checks commit:, not our archive pins.
+      - name: Install unemu
+        id: unemu
+        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        with:
+          version: v0.0.4
+          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
 
       # The recipes beside each script, built with what the script made (a
       # library, found before any URL): the asset the recipes download is
       # the archive the script makes.
       - name: Build the recipes from the prepared inputs
+        env:
+          UNEMU: ${{ steps.unemu.outputs.path }}
         run: |
           mapfile -d '' -t scripts < "$RUNNER_TEMP/scripts"
           folders=()
           for script in "${scripts[@]}"; do
             folders+=("$(dirname -- "$(dirname -- "$script")")")
           done
-          python3 -I lib/publish.py --cli "$RUNNER_TEMP/upcli/upcli" --fetch --library out -- "${folders[@]}"
+          python3 -I lib/publish.py --cli "$UNEMU" --fetch --library out -- "${folders[@]}"
 
   # One status to require: every job above passed, or was not needed.
   result:

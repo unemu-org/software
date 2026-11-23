@@ -6,9 +6,9 @@
 # CC0-1.0) with DOS line ends; the source archive is a prepared input that
 # source/build.sh rebuilds. What every FreeDOS release shares is in
 # freedos.work.toml. digest and the lock beside this file pin the set, as
-# the release of upcli.toml pinned it (docs/recipes.md).
+# originally pinned; unemu.toml moves only after conformance (docs/recipes.md).
 
-recipe = "0.1"
+recipe = "1.0"
 work = "freedos"
 
 [media]

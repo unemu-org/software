@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Build the media sets and firmware packages from their recipes with the
-pinned unemupc CLI (upcli) into a store, check them, and push them only when
+pinned unemu CLI (unemu) into a store, check them, and push them only when
 asked.
 
-    python3 -I lib/publish.py --cli UPCLI [--store DIR] [--fetch] [--library DIR]...
+    python3 -I lib/publish.py --cli UNEMU [--store DIR] [--fetch] [--library DIR]...
                               [--no-build] [--experimental RUN] [--skip-published]
                               [--push] [--report FILE] [RECIPE|FOLDER|REF]...
 
-    --cli UPCLI         the upcli binary of the unemupc release in
-                        upcli.toml (lib/upcli.py fetch), or one built at its
-                        commit (default: the UPCLI environment variable; a
+    --cli UNEMU         the unemu binary of the unemu release in
+                        unemu.toml (lib/unemu.py fetch), or one built at its
+                        commit (default: the UNEMU environment variable; a
                         name without a slash is looked up on PATH)
     --store DIR         build into DIR, a new directory kept afterwards
                         (default: a fresh store under build/, removed
                         afterwards); with --no-build, the existing store an
                         earlier run built
-    --fetch             let `upcli recipe build` download a missing input
+    --fetch             let `unemu recipe build` download a missing input
                         from the URLs its recipe pins (its consent)
-    --library DIR       a folder where `upcli recipe build` looks for inputs
+    --library DIR       a folder where `unemu recipe build` looks for inputs
                         by size and SHA-256 (repeatable)
     --no-build          build nothing: every selected set and package must
                         already be in --store under its own tag, every blob
@@ -49,9 +49,9 @@ asked.
                         unemu/firmware/ibm-pc/<id>:r1); default: every open recipe
 
 Private recipes are descriptions only. The default skips them; an explicit
-selection including one is refused before any upcli or registry call.
+selection including one is refused before any unemu or registry call.
 
-A recipe (lib/recipes.py, docs/recipes.md) is a recipe file of upcli: one
+A recipe (lib/recipes.py, docs/recipes.md) is a recipe file of unemu: one
 set or package, its ref <repository>:<tag> from its identity table. Tags
 follow unemupc's decision-38: a tag that ends in rN names one set or package
 for ever and never moves; a set's release alone (1.4 of 1.4-r1) is an alias
@@ -62,7 +62,7 @@ one is not taken further:
 
  1. Every recipe file read (lib/recipes.py): its identity, and no ref or
     alias named twice. A refusal stops the run before anything else.
- 2. The version check of upcli (below), then `upcli recipe check` over every
+ 2. The version check of unemu (below), then `unemu recipe check` over every
     recipe: a finding stops the run; drift is reported and is no refusal
     here, as a build writes the lock's record (CI refuses it,
     lib/recipes.py check).
@@ -81,17 +81,17 @@ one is not taken further:
     experimental tags, and its row's detail notes what the official tag
     still serves, so a replacement can be tested before the maintainer
     deletes the old one.
- 4. Each set or package built with `upcli recipe build FILE --store STORE`
+ 4. Each set or package built with `unemu recipe build FILE --store STORE`
     (with --fetch and --library as given), which checks every byte it makes
     against the recipe's lock and tags only the locked artifact; a draft is
     built as a draft. With --no-build nothing is built: the store (an OCI
-    layout an earlier job built) must name the ref, and before upcli reads
+    layout an earlier job built) must name the ref, and before unemu reads
     it, the manifest it names and every blob that manifest names are
     checked here against their digests and sizes and copied into a clean
-    store, the only one upcli reads (take_from_store), and the
-    manifest's digest against the recipe's pin. Then `upcli image media
+    store, the only one unemu reads (take_from_store), and the
+    manifest's digest against the recipe's pin. Then `unemu image media
     show` or `image firmware show` of the ref must name it with the digest
-    and report it pushable to unemu/, and `upcli image push --dry-run`
+    and report it pushable to unemu/, and `unemu image push --dry-run`
     against the target, and a
     set's alias target, must say the guard allows it. All offline; the dry
     run checks no tag rule, which only a push does on the registry.
@@ -104,8 +104,8 @@ one is not taken further:
     (anonymous_digest). Either naming another digest refuses the set or
     package before anything of it is pushed: a revision tag never moves, and
     an alias is never moved here. Then the missing ones are pushed with
-    `upcli image push` (never --move), the revision first, then the alias,
-    which upcli lets onto the newest revision the registry has; each is
+    `unemu image push` (never --move), the revision first, then the alias,
+    which unemu lets onto the newest revision the registry has; each is
     read back: a read-back that fails or names another digest leaves it
     `unconfirmed` (pushed, not confirmed). A set whose revision tag is on
     the registry with its digest but whose alias push or read-back fails is
@@ -118,30 +118,30 @@ A summary table (repository, tag, alias, digest, outcome, licence) goes to
 stdout, progress to stderr. Exit status: 0 when everything selected passed
 (and, with --push, is on the registry), 1 otherwise, 2 for a usage error.
 
-The registry host is UNEMU_REGISTRY_HOST, checked as upcli checks one: a
+The registry host is UNEMU_REGISTRY_HOST, checked as unemu checks one: a
 name with a dot or a port, or localhost, the port at most 65535. A dry run
 without it names the family default registry.unemu.dev, which it contacts
 only for the anonymous reads of --skip-published; a push needs it set. A
 push takes its credentials only from the environment, UNEMU_REGISTRY_USER
-and UNEMU_REGISTRY_PASSWORD, and hands them to the upcli push alone,
-through its environment: never on a command line, never to another upcli
-command. upcli runs with an environment of its own (PATH, a fresh HOME and
+and UNEMU_REGISTRY_PASSWORD, and hands them to the unemu push alone,
+through its environment: never on a command line, never to another unemu
+command. unemu runs with an environment of its own (PATH, a fresh HOME and
 TMPDIR in the run's work directory, LC_ALL=C, TZ=UTC) and a registries file
 of its own: the target host, public, unemu/ only. A recipe is data: no step
 of it starts a process, and every input it takes is checked by size and
 SHA-256 before use.
 
-The CLI pin is the unemupc release in upcli.toml (lib/upcli.py). Before
-anything is built, `upcli --version` runs once, and its commit line, the
+The CLI pin is the unemu release in unemu.toml (lib/unemu.py). Before
+anything is built, `unemu --version` runs once, and its commit line, the
 one line `commit: <40 lower-case hex digits>`, must name the pinned commit
-(upcli.check_cli): another commit, a malformed or repeated commit line, a
+(unemu.check_cli): another commit, a malformed or repeated commit line, a
 failed --version, or none at all, refuses the run. A release build prints
 that line; a source build prints it only when built with
 UNEMUPC_SOURCE_COMMIT set to the commit, and is refused without it. There
 is no way around this check, for a dry run either.
 
 Standard library only. Run it with -I; it finds lib/recipes.py and
-lib/upcli.py next to itself.
+lib/unemu.py next to itself.
 """
 
 import argparse
@@ -184,13 +184,13 @@ def _module(name):
 
 
 recipes = _module("recipes")
-upcli = _module("upcli")
+unemu = _module("unemu")
 
-CLI_ENV = "UPCLI"
+CLI_ENV = "UNEMU"
 USER_ENV = "UNEMU_REGISTRY_USER"
 PASSWORD_ENV = "UNEMU_REGISTRY_PASSWORD"
 HOST_ENV = "UNEMU_REGISTRY_HOST"
-# upcli's family default registry (image_registry::reference::DEFAULT_REGISTRY).
+# unemu's family default registry (image_registry::reference::DEFAULT_REGISTRY).
 DEFAULT_HOST = "registry.unemu.dev"
 # Every repository lives in unemu/; an experimental target puts
 # experimental/ after it (unemu/experimental/media/ibm-pc/<work>,
@@ -200,16 +200,16 @@ DEFAULT_HOST = "registry.unemu.dev"
 # <release>-ci<RUN>, pushed as the official alias is.
 OFFICIAL_PREFIX = "unemu/"
 EXPERIMENTAL_PREFIX = "unemu/experimental/"
-PIN_FILE = upcli.PIN_FILE
+PIN_FILE = unemu.PIN_FILE
 RUN = re.compile(r"[1-9][0-9]{0,19}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-# What `upcli image media show` and `upcli image firmware show` say last of
+# What `unemu image media show` and `unemu image firmware show` say last of
 # a set or package the guard lets into unemu/.
 PUSHABLE = "push\tany configured registry, including unemu/"
-# What `upcli recipe build` says last: built or already built, the ref, the
+# What `unemu recipe build` says last: built or already built, the ref, the
 # digest, and locked (a pinned recipe, built from its lock) or draft.
 BUILT = re.compile(r"(?:already )?built ([^\t]+)\t(sha256:[0-9a-f]{64})\t(locked|draft)")
-# The manifest types the anonymous read accepts: upcli pushes an OCI image
+# The manifest types the anonymous read accepts: unemu pushes an OCI image
 # manifest; anything else at the tag (an index, a Docker schema 2 manifest
 # or list) is read too, and refused by its digest. A registry that cannot
 # answer in an accepted type may say 404, so a 404 is confirmed through the
@@ -274,7 +274,7 @@ class Item:
 
     def tags(self):
         """The target's tags to push, in order: the revision tag, then a
-        set's alias, which upcli moves onto the newest revision only."""
+        set's alias, which unemu moves onto the newest revision only."""
         return [self.tag] + ([self.alias] if self.alias is not None else [])
 
     def fail(self, outcome, detail):
@@ -289,7 +289,7 @@ def log(text):
 
 
 def registry_host(text):
-    """TEXT as upcli takes a registry host (config::validate_registry_host
+    """TEXT as unemu takes a registry host (config::validate_registry_host
     and reference::validate_host): trimmed, lower case, a name with a dot or
     a port, or localhost, or a bracketed IPv6 literal; labels of letters,
     digits and inner '-'; a port of digits up to 65535; no scheme or path.
@@ -516,22 +516,22 @@ def anonymous_digest(host, repository, tag, environ=os.environ, plain_http=False
 
 
 def read_pin(root):
-    """The unemupc release upcli.toml pins (upcli.read_pin)."""
+    """The unemupc release unemu.toml pins (unemu.read_pin)."""
     try:
-        return upcli.read_pin(root / PIN_FILE)
-    except upcli.Refusal as refusal:
+        return unemu.read_pin(root / PIN_FILE)
+    except unemu.Refusal as refusal:
         raise Failure(str(refusal)) from None
 
 
 def run_cli(cli, args, env):
-    """Run upcli; its output is UTF-8, and anything else is an error."""
+    """Run unemu; its output is UTF-8, and anything else is an error."""
     try:
         return subprocess.run([cli, *args], capture_output=True, encoding="utf-8", errors="strict",
                               env=env, check=False)
     except OSError as error:
         raise Failure(f"cannot run {cli}: {error.strerror or error}") from None
     except UnicodeDecodeError:
-        raise Failure(f"upcli {' '.join(args[:2])}: output that is not UTF-8") from None
+        raise Failure(f"unemu {' '.join(args[:2])}: output that is not UTF-8") from None
 
 
 def last_line(text):
@@ -556,7 +556,7 @@ def describe(error):
 
 
 def check_recipes(cli, root, every, env):
-    """`upcli recipe check` over every recipe file: a finding is a Failure.
+    """`unemu recipe check` over every recipe file: a finding is a Failure.
     Drift is reported: a build writes the lock's record, whatever the work
     file says now."""
     if not every:
@@ -568,15 +568,15 @@ def check_recipes(cli, root, every, env):
             log(f"warning: {line.strip()}")
     if done.returncode != 0:
         sys.stderr.write(done.stdout + done.stderr)
-        raise Failure(f"upcli recipe check: {why(done)}")
+        raise Failure(f"unemu recipe check: {why(done)}")
     missing = recipes.not_passed(done.stdout, [root / r.path for r in every])
     if missing:
-        raise Failure("upcli recipe check printed no ok line for " + ", ".join(str(m) for m in missing))
+        raise Failure("unemu recipe check printed no ok line for " + ", ".join(str(m) for m in missing))
     log(last_line(done.stdout))
 
 
 def build_item(cli, root, item, store, options, env):
-    """`upcli recipe build` of the item's recipe into STORE; its digest and
+    """`unemu recipe build` of the item's recipe into STORE; its digest and
     whether the recipe is locked (pinned) or a draft. Its report goes to
     stderr."""
     args = ["recipe", "build", str(root / item.recipe.path), "--store", str(store)]
@@ -596,7 +596,7 @@ def build_item(cli, root, item, store, options, env):
 
 
 def check_show(cli, item, digest, store, env):
-    """`upcli image media show` or `image firmware show` of the item in
+    """`unemu image media show` or `image firmware show` of the item in
     STORE names it first, with DIGEST (None: any digest, which is then
     returned), and reports it pushable to unemu/ last."""
     done = run_cli(cli, ["image", item.kind, "show", item.store_tag, "--store", str(store)], env)
@@ -613,7 +613,7 @@ def check_show(cli, item, digest, store, env):
     return first[1]
 
 
-# What upcli 0.0.3 writes into a store's store.toml and images/oci-layout;
+# What unemu 0.0.4 writes into a store's store.toml and images/oci-layout;
 # a clean store (--no-build) is made of these, the index entries it pushes
 # and the blobs they name, every one checked.
 STORE_TOML = b"schema = 1\n"
@@ -661,7 +661,7 @@ def copy_blob(source, clean, digest, size):
 
 
 def clean_store(clean):
-    """A new, empty store at CLEAN, as upcli 0.0.3 lays one out."""
+    """A new, empty store at CLEAN, as unemu 0.0.4 lays one out."""
     (pathlib.Path(clean) / "images" / "blobs" / "sha256").mkdir(parents=True)
     (pathlib.Path(clean) / "locks").mkdir()
     (pathlib.Path(clean) / "store.toml").write_bytes(STORE_TOML)
@@ -703,10 +703,10 @@ def read_index(source):
 def take_from_store(source, clean, ref, pinned):
     """--no-build: the digest under which the store SOURCE (an OCI layout
     an earlier job built, untrusted here) names REF. When it is PINNED,
-    REF is copied into the store CLEAN, where upcli
+    REF is copied into the store CLEAN, where unemu
     reads it, and only what passed is copied: the manifest the index names
     under REF, with that digest, and every blob the manifest names, config
-    and layers, each with its digest and size. So upcli reads no file of
+    and layers, each with its digest and size. So unemu reads no file of
     SOURCE, and the bytes a push uploads are the ones the pin names."""
     named = [entry for entry in read_index(source)
              if isinstance(entry.get("annotations"), dict)
@@ -747,7 +747,7 @@ def dry_run(cli, item, target, store, config, digest, env):
 
 
 def push_artifact(cli, item, target, store, config, env):
-    """`upcli image push`, never with --move; what it did and the digest it
+    """`unemu image push`, never with --move; what it did and the digest it
     reports."""
     args = ["image", "push", item.store_tag, target, "--store", str(store), "--config", str(config)]
     done = run_cli(cli, args, env)
@@ -782,13 +782,13 @@ def parse_args(argv, environ):
         description="Build, check and (with --push) publish the media sets and firmware packages.",
     )
     parser.add_argument("--cli", default=environ.get(CLI_ENV),
-                        help=f"the upcli binary (default: ${CLI_ENV})")
+                        help=f"the unemu binary (default: ${CLI_ENV})")
     parser.add_argument("--store", help="a new directory to build into, kept afterwards; with --no-build, "
                                         "the store an earlier run built")
     parser.add_argument("--fetch", action="store_true",
-                        help="let upcli recipe build download missing inputs from their pinned URLs")
+                        help="let unemu recipe build download missing inputs from their pinned URLs")
     parser.add_argument("--library", action="append", default=[], metavar="DIR",
-                        help="a folder where upcli recipe build looks for inputs (repeatable)")
+                        help="a folder where unemu recipe build looks for inputs (repeatable)")
     parser.add_argument("--no-build", action="store_true",
                         help="build nothing: every selected set and package must be in --store already")
     parser.add_argument("--experimental", metavar="RUN",
@@ -802,7 +802,7 @@ def parse_args(argv, environ):
     parser.add_argument("selectors", nargs="*", metavar="RECIPE|FOLDER|REF")
     options = parser.parse_args(argv)
     if not options.cli:
-        parser.error(f"--cli UPCLI (or ${CLI_ENV}) is required")
+        parser.error(f"--cli UNEMU (or ${CLI_ENV}) is required")
     if options.experimental is not None and not RUN.fullmatch(options.experimental):
         parser.error("--experimental RUN takes the CI run id: 1 to 20 digits, not starting with 0")
     if options.no_build:
@@ -843,10 +843,10 @@ def find_cli(parser, cli, environ):
 
 
 def select(parser, root, selectors):
-    """Read every recipe, but pass only open ones to upcli.
+    """Read every recipe, but pass only open ones to unemu.
 
     An explicit selector that includes a private recipe is refused before
-    any upcli invocation, registry read or store access.
+    any unemu invocation, registry read or store access.
     """
     log("== read the recipes")
     try:
@@ -992,7 +992,7 @@ def main(argv=None, root=ROOT, registry=None, environ=None):
 
 
 def run(options, root, cli, pin, host, every, items, work, store_arg, registry, environ):
-    # With --no-build, upcli reads a clean store of its own, into which only
+    # With --no-build, unemu reads a clean store of its own, into which only
     # checked bytes of the given store are copied (take_from_store).
     store = work / "store" if options.no_build or store_arg is None else store_arg
     if options.no_build:
@@ -1015,14 +1015,14 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
         "TZ": "UTC",
     }
     mode = "push" if options.push else "dry run"
-    log(f"upcli {cli}")
-    log(f"upcli pin {pin.commit} (unemupc {pin.tag}, {PIN_FILE})")
+    log(f"unemu {cli}")
+    log(f"unemu pin {pin.commit} (unemu {pin.tag}, {PIN_FILE})")
     try:
-        upcli.check_cli(cli, pin.commit, env)
-    except upcli.Refusal as refusal:
+        unemu.check_cli(cli, pin.commit, env)
+    except unemu.Refusal as refusal:
         log(f"refused: {refusal}")
         return 1
-    log(f"upcli --version reports commit {pin.commit}, as pinned")
+    log(f"unemu --version reports commit {pin.commit}, as pinned")
     log("== check the recipes")
     try:
         check_recipes(cli, root, every, env)
@@ -1049,8 +1049,8 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
                 pinned = item.recipe.digest
                 if pinned is None:
                     # Nothing of a draft is read from the store, so no byte
-                    # without a pin reaches upcli where it can push.
-                    item.fail("unpinned", "a draft: the recipe has no digest pin (upcli recipe pin); never "
+                    # without a pin reaches unemu where it can push.
+                    item.fail("unpinned", "a draft: the recipe has no digest pin (unemu recipe pin); never "
                                           "taken from the store or pushed")
                     log(f"{item.ref}: {item.outcome}")
                     continue
@@ -1073,9 +1073,9 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
             continue
         pinned = item.recipe.digest
         if pinned is None or state == "draft":
-            item.fail("unpinned", "a draft: the recipe has no digest pin (upcli recipe pin); never pushed")
+            item.fail("unpinned", "a draft: the recipe has no digest pin (unemu recipe pin); never pushed")
         elif pinned != item.digest:
-            item.fail("mismatch", f"upcli gives {item.digest}, the recipe pins {pinned}")
+            item.fail("mismatch", f"unemu gives {item.digest}, the recipe pins {pinned}")
         else:
             item.outcome = "dry run"
         log(f"{item.ref}: {item.digest} -> {reference}: {item.outcome}")
@@ -1090,7 +1090,7 @@ def run(options, root, cli, pin, host, every, items, work, store_arg, registry, 
 # Why a tag or alias that names another digest is the end of the road. No
 # next revision is advised: none is published before unemupc's first public
 # release (its decision-32, point 5), and moving a set's alias onto a newer
-# revision, which takes upcli's --move, is not supported here.
+# revision, which takes unemu's --move, is not supported here.
 NEVER_MOVES = "a revision tag never moves: stop and ask the maintainer"
 ALIAS_STAYS = "this pipeline never moves an alias: stop and ask the maintainer"
 
@@ -1186,7 +1186,7 @@ def push_one(cli, host, item, store, config, secrets, registry):
     """One set or package: the anonymous read of its tag and of a set's
     alias, then for each that is missing, the revision first, the push and
     the read-back. Another digest under either refuses it before anything
-    is pushed. Whatever goes wrong marks it; once upcli has pushed, a failed
+    is pushed. Whatever goes wrong marks it; once unemu has pushed, a failed
     or other read-back marks it pushed but unconfirmed. When the revision
     tag is on the registry with the digest (read back, or there already)
     but its alias step fails, it is `partial`, and the detail says so."""
@@ -1224,15 +1224,15 @@ def push_one(cli, host, item, store, config, secrets, registry):
             fail("failed", describe(error))
             return
         if digest != item.digest:
-            fail("failed", f"upcli pushed {digest} to :{name}, the {item.kind} digest is {item.digest}")
+            fail("failed", f"unemu pushed {digest} to :{name}, the {item.kind} digest is {item.digest}")
             return
         try:
             served = registry(host, item.repository, name)
         except Exception as error:  # noqa: BLE001 - every failure reaches the summary
-            fail("unconfirmed", f"upcli {word} {digest} to :{name}; the read-back failed: {describe(error)}")
+            fail("unconfirmed", f"unemu {word} {digest} to :{name}; the read-back failed: {describe(error)}")
             return
         if served != item.digest:
-            fail("unconfirmed", f"upcli {word} {digest} to :{name}; the registry serves {served}")
+            fail("unconfirmed", f"unemu {word} {digest} to :{name}; the registry serves {served}")
             return
         confirmed.append(name)
         pushed = pushed or word == "pushed"

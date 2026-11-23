@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Tests of lib/recipes.py, offline, and of this repository's own recipe
-files: what the pipeline reads of them, and the facts upcli's check cannot
+files: what the pipeline reads of them, and the facts unemu's check cannot
 see (the archive script's pins, the locks and bundled inputs on disk).
 
     python3 -I tests/recipes_test.py
@@ -35,15 +35,15 @@ tag = "v9.9.9"
 version = "9.9.9"
 
 [archive.x86_64-unknown-linux-gnu]
-file = "unemupc-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
+file = "unemu-9.9.9-x86_64-unknown-linux-gnu.tar.gz"
 sha256 = "{'a' * 64}"
 size = 1
-upcli_sha256 = "{'b' * 64}"
-upcli_size = 1
+unemu_sha256 = "{'b' * 64}"
+unemu_size = 1
 """
 DIGEST = "sha256:" + "d" * 64
 
-MEDIA = f"""recipe = "0.1"
+MEDIA = f"""recipe = "1.0"
 work = "demo"
 
 [media]
@@ -68,7 +68,7 @@ size = 1
 sha256 = "{'b' * 64}"
 """
 
-FIRMWARE = """recipe = "0.1"
+FIRMWARE = """recipe = "1.0"
 
 [firmware]
 name = "unemu/firmware/ibm-pc/demo-bios"
@@ -83,7 +83,7 @@ PRIVATE = MEDIA.replace("unemu/media/", "private/media/").replace(
     '[license]\nexpression = "GPL-2.0-or-later"\n\n', "")
 PRIVATE_PATH = "recipes/private/media/demo/demo-1.0-720k.media.toml"
 
-# A fake upcli for `check`: its --version names PIN, and `recipe check`
+# A fake unemu for `check`: its --version names PIN, and `recipe check`
 # prints what the test's configuration says.
 FAKE_CLI = r'''#!@PYTHON@ -I
 import json, sys
@@ -92,7 +92,7 @@ with open(@CONFIG@) as handle:
 with open(@LOG@, "a") as handle:
     handle.write(json.dumps(sys.argv[1:]) + "\n")
 if sys.argv[1:] == ["--version"]:
-    print("upcli 9.9.9\ncommit: " + config.get("commit", "@PIN@"))
+    print("unemu 9.9.9\ncommit: " + config.get("commit", "@PIN@"))
     sys.exit(0)
 if sys.argv[1:3] == ["recipe", "check"]:
     for line in config.get("lines", []):
@@ -169,6 +169,14 @@ class Parse(unittest.TestCase):
                     recipes.parse(path, text)
                 self.assertIn(fragment, str(caught.exception))
 
+    def test_only_frozen_recipe_format_is_accepted(self):
+        for text in (MEDIA, PRIVATE, FIRMWARE):
+            path = "recipes/x.firmware.toml" if text == FIRMWARE else "recipes/x.media.toml"
+            for declaration in ('recipe = "0.1"', 'recipe = "2.0"', 'recipe = 1.0', ''):
+                with self.subTest(path=path, declaration=declaration):
+                    with self.assertRaisesRegex(recipes.Refusal, 'recipe must be "1.0"'):
+                        recipes.parse(path, text.replace('recipe = "1.0"', declaration).encode())
+
     def test_private_policy_refusals(self):
         for text, fragment in (
             (PRIVATE + '\n[license]\n', "must have no [license]"),
@@ -202,20 +210,20 @@ class Tree(unittest.TestCase):
         self.addCleanup(self._directory.cleanup)
         self.root = pathlib.Path(self._directory.name) / "repo"
         for path, text in (("recipes/media/demo/demo-1.0-720k.media.toml", MEDIA),
-                           ("recipes/media/demo/demo.work.toml", 'recipe = "0.1"\n'),
+                           ("recipes/media/demo/demo.work.toml", 'recipe = "1.0"\n'),
                            ("recipes/media/demo/demo-1.0-720k.media.toml.lock/sha256/x.media.toml", MEDIA),
                            ("recipes/media/.hidden/x.media.toml", MEDIA),
                            ("recipes/firmware/demo-bios.firmware.toml", FIRMWARE)):
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_text(text, encoding="utf-8")
-        (self.root / "upcli.toml").write_text(PIN_TOML, encoding="ascii")
+        (self.root / "unemu.toml").write_text(PIN_TOML, encoding="ascii")
 
     def private_recipe(self, text=PRIVATE):
         path = self.root / PRIVATE_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         (path.parent / "licenses.txt").write_bytes(b"x")  # Our synthetic text.
-        (path.parent / "demo.work.toml").write_text('recipe = "0.1"\n')
+        (path.parent / "demo.work.toml").write_text('recipe = "1.0"\n')
         return path
 
     def test_private_bundle_bytes(self):
@@ -228,7 +236,7 @@ class Tree(unittest.TestCase):
                 with self.assertRaisesRegex(recipes.Refusal, "UTF-8 text without NUL"):
                     recipes.load(self.root)
         bundle.unlink()
-        bundle.symlink_to(self.root / "upcli.toml")
+        bundle.symlink_to(self.root / "unemu.toml")
         with self.assertRaisesRegex(recipes.Refusal, "regular text file beside"):
             recipes.load(self.root)
         bundle.unlink()
@@ -284,7 +292,7 @@ class Tree(unittest.TestCase):
         log = bin_dir / "log"
         log.unlink(missing_ok=True)
         (bin_dir / "config.json").write_text(json.dumps(config), encoding="utf-8")
-        cli = bin_dir / "upcli"
+        cli = bin_dir / "unemu"
         cli.write_text(FAKE_CLI.replace("@PYTHON@", sys.executable).replace("@PIN@", PIN)
                        .replace("@CONFIG@", repr(str(bin_dir / "config.json"))).replace("@LOG@", repr(str(log))),
                        encoding="utf-8")
@@ -303,7 +311,7 @@ class Tree(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"refused: drafts, which are never published: {firmware}", stderr)
         self.assertEqual(calls, [["--version"], ["recipe", "check", str(self.root / "recipes")]])
-        # Only the media recipe: pinned, and upcli passes it and its work
+        # Only the media recipe: pinned, and unemu passes it and its work
         # file.
         media = str(self.root / "recipes/media/demo")
         ok = [f"{media}/demo-1.0-720k.media.toml: ok, media recipe; required inputs: archive, licenses",
@@ -317,8 +325,8 @@ class Tree(unittest.TestCase):
                       [ok[0].replace("demo-1.0-720k", "other"), ok[1]]):
             code, _, stderr, _ = self.check(media, lines=lines)
             self.assertEqual(code, 1, lines)
-            self.assertIn("refused: upcli printed no ok line for recipes/media/demo/", stderr)
-        # One recipe given as a file: its work file is given to upcli too,
+            self.assertIn("refused: unemu printed no ok line for recipes/media/demo/", stderr)
+        # One recipe given as a file: its work file is given to unemu too,
         # which reports only the files it is given, and needs its ok line.
         recipe = f"{media}/demo-1.0-720k.media.toml"
         code, _, stderr, calls = self.check(recipe, lines=ok)
@@ -326,9 +334,9 @@ class Tree(unittest.TestCase):
         self.assertEqual(calls[1], ["recipe", "check", recipe, f"{media}/demo.work.toml"])
         code, _, stderr, _ = self.check(recipe, lines=ok[:1])
         self.assertEqual(code, 1)
-        self.assertIn("refused: upcli printed no ok line for recipes/media/demo/demo.work.toml", stderr)
+        self.assertIn("refused: unemu printed no ok line for recipes/media/demo/demo.work.toml", stderr)
         # A work file alone names the recipes that name it; they are given
-        # to upcli too.
+        # to unemu too.
         code, _, stderr, calls = self.check(f"{media}/demo.work.toml", lines=ok)
         self.assertEqual(code, 0, stderr)
         self.assertEqual(calls[1], ["recipe", "check", f"{media}/demo.work.toml", recipe])
@@ -339,7 +347,7 @@ class Tree(unittest.TestCase):
         # A finding, drift, another commit.
         code, _, stderr, _ = self.check(media, status=1, lines=ok)
         self.assertEqual(code, 1)
-        self.assertIn("upcli recipe check exited with status 1", stderr)
+        self.assertIn("unemu recipe check exited with status 1", stderr)
         code, stdout, stderr, _ = self.check(media, lines=ok + ["  drift: title.synopsis: x"])
         self.assertEqual(code, 1)
         self.assertIn("refused: 1 drift lines", stderr)

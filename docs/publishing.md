@@ -1,7 +1,7 @@
 # Publishing
 
 `lib/publish.py` builds the recipes ([recipes.md](recipes.md)) with the
-pinned unemupc CLI, `upcli`, into a store, checks every set and package
+pinned unemu CLI, `unemu`, into a store, checks every set and package
 against its recipe's lock and digest, and pushes them to the registry only
 when asked. Without `--push` it is a dry run: it needs no credentials and
 writes to no registry, and it reads one only when `--skip-published` asks.
@@ -10,46 +10,47 @@ Private recipes in `recipes/private/` describe user-supplied titles only.
 Their outputs under `private/media/` or `private/firmware/` are never built,
 fetched, conformed or published by this pipeline, including experimental
 runs. The default selection skips them; any explicit file, ref or folder
-selection containing one is refused before upcli or a registry is called.
+selection containing one is refused before unemu or a registry is called.
 Only `lib/recipes.py check` checks them statically, alongside open recipes.
 
-## The pinned upcli
+## The pinned unemu
 
-### upcli.toml
+### unemu.toml
 
-[`upcli.toml`](../upcli.toml) pins one unemupc release. Its keys are exactly
-these; `lib/upcli.py` refuses any other key, a missing or malformed one, and
+[`unemu.toml`](../unemu.toml) pins one unemu release. Its keys are exactly
+these; `lib/unemu.py` refuses any other key, a missing or malformed one, and
 (as TOML does) a key given twice.
 
 | Key | What it holds |
 | --- | --- |
 | `commit` | the full commit the release's tag points to |
-| `tag`, `version` | the release's tag (`v0.0.3`) and version (`0.0.3`) |
+| `tag`, `version` | the release's tag (`v0.0.4`) and version (`0.0.4`) |
 | `[archive.<triple>]` | one table per platform: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` |
-| `file` | the archive's name, `unemupc-<version>-<triple>.tar.gz` |
+| `file` | the archive's name, `unemu-<version>-<triple>.tar.gz` |
 | `sha256`, `size` | the archive's SHA-256 and size in bytes |
-| `upcli_sha256`, `upcli_size` | the SHA-256 and size of its member `unemupc-<version>-<triple>/upcli` |
+| `unemu_sha256`, `unemu_size` | the SHA-256 and size of its member `unemu-<version>-<triple>/unemu` |
 
-Every hash is our own pin, never checked against the release's
-`SHA256SUMS`.
+These hashes are our own pins for local use by `lib/unemu.py fetch`,
+which never checks against the release's `SHA256SUMS`. CI uses the
+separate action route below and does not check our archive or member pins.
 
-### Getting upcli
+### Getting unemu
 
-The release binary, on a Linux x86_64 or macOS arm64 host:
+Locally, on a Linux x86_64 or macOS arm64 host:
 
 ```sh
-python3 -I lib/upcli.py fetch out/upcli
+python3 -I lib/unemu.py fetch out/unemu
 ```
 
 `fetch` takes a new directory (it refuses one that exists) and:
 
-1. reads the host's archive into memory once, from `cache/upcli/`, or else
+1. reads the host's archive into memory once, from `cache/unemu/`, or else
    downloads it from the GitHub release over HTTPS (curl) into a temporary
    directory;
 2. checks those bytes against the pinned size and SHA-256, and uses only
    those bytes from then on; a download is written into the cache only once
    checked, and a cached copy that differs is refused, never replaced;
-3. takes out only the member `unemupc-<version>-<triple>/upcli`: the one
+3. takes out only the member `unemu-<version>-<triple>/unemu`: the one
    member of that name, a regular file, with the pinned size and SHA-256 (an
    archive that names any member by an absolute path or with `..` is
    refused whole), and writes it into the directory with mode 0755;
@@ -63,19 +64,36 @@ in [AGENTS.md](../AGENTS.md)). Any other host is refused. Under an x86_64
 Python on Apple silicon (Rosetta) the host reads as macOS x86_64, so pass
 `--triple aarch64-apple-darwin`. `--cache DIR` keeps the archive elsewhere.
 
-Or build it from source, in a clean unemupc checkout at the pinned commit
-with no local changes, inside unemupc's devShell:
+In CI, every job that needs unemu installs it with upstream
+`unemu-org/unemu/.github/actions/setup-unemu`, pinned by full SHA to the
+release commit in `unemu.toml`. Its `version` input equals `tag` (`v0.0.4`),
+and its `commit` input equals `commit`. The action downloads the release
+archive and its `SHA256SUMS`, checks the archive against that list, then
+runs `unemu --version` and checks its `commit:` line against the input.
+This checks the download against the release's own sums; it is not a check
+against our archive or member pins. The maintainer chose the action alone
+on 2026-11-23, with no extra hash check in CI. Later steps receive its
+absolute `path` output through `env`, then use the quoted shell variable.
+The push job installs unemu afresh, never from the build artifact.
+
+At this release the action supports Linux X64 and documents glibc 2.35+
+and the ALSA runtime (`libasound2`) as requirements. The workflows use
+`ubuntu-latest` without an apt step; availability of that runtime remains
+to be confirmed by the first CI run.
+
+Or build it from source, in a clean unemu checkout at the pinned commit
+with no local changes, inside unemu's devShell:
 
 ```sh
-UNEMUPC_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build -p upcli --bin upcli
+UNEMUPC_SOURCE_COMMIT=$(git rev-parse HEAD) cargo build -p window --bin unemu
 ```
 
-Without `UNEMUPC_SOURCE_COMMIT` the build prints no commit line (unemupc's
+Without `UNEMUPC_SOURCE_COMMIT` the build prints no commit line (unemu's
 `crates/platforms/src/lib.rs`, `commit_line`) and the pipeline refuses it.
 
 ### The version check
 
-Before anything is checked or built, the pipeline runs `upcli --version`
+Before anything is checked or built, the pipeline runs `unemu --version`
 once and reads its stdout. Exactly one line may start with `commit:`, and it
 must be `commit: ` followed by the 40 lower-case hex digits of the pinned
 commit. Another commit, a malformed or repeated commit line, a failing
@@ -86,10 +104,16 @@ a push. There is no option to skip it. Nothing else in the output is read.
 ### Moving the pin
 
 1. Take the commit from the new release's tag.
-2. Download each archive and measure its SHA-256 and size; read its `upcli`
+2. Download each archive and measure its SHA-256 and size; read its `unemu`
    member out of the checked archive, without running it, and measure that
    too. Never copy a hash from the release's `SHA256SUMS`.
-3. Update `upcli.toml`, fetch the binary, and run `lib/recipes.py check`,
+3. Update `unemu.toml` and every `setup-unemu` use in `check.yml`,
+   `experimental.yml` and `publish.yml` together: the action SHA and
+   `commit` input equal the TOML `commit`, and `version` equals its `tag`.
+   Run the README check command; `tests/changed_test.py` checks agreement,
+   full SHA pinning of every action, and the absence of `lib/unemu.py fetch`
+   in workflows.
+4. Fetch the binary locally and run `lib/recipes.py check`,
    conformance over the open recipe folders with `--library DIR`, and the dry run. A
    later release builds every recipe from its lock, so every digest must
    stay as pinned; a release that cannot build one of them is not taken.
@@ -106,21 +130,21 @@ Every repository names the machine platform, `ibm-pc`, after its kind
 
 A tag that ends in `rN` names one set or package for ever and never moves.
 A set's release alone is an alias that names the newest revision of that
-release: the pipeline pushes it right after the revision, and upcli lets
+release: the pipeline pushes it right after the revision, and unemu lets
 an alias onto the newest revision the registry holds only. Moving an alias
-to a newer revision takes `upcli image push --move`, which this pipeline
+to a newer revision takes `unemu image push --move`, which this pipeline
 never passes and does not support yet, so an alias that names another
 image is `refused` and the maintainer decides. No further revision is
 published before unemupc's first public release (its decision-32, point
 5): until then a corrected set or package replaces the published one under
 the same tags, in the order of [Replacing a published set or
 package](#replacing-a-published-set-or-package). Sets and
-packages have no `latest`, and everything upcli 0.0.3 writes declares
-`unemu.min-app-version` 0.0.3. `upcli recipe build` tags a set or package
+packages have no `latest`. Our locked artifacts retain their original
+`unemu.min-app-version` 0.0.3 annotation under unemu 0.0.4. `unemu recipe build` tags a set or package
 under its own ref in the store (and a set's alias with it); every push
 names its `unemu/...` target explicitly.
 
-`upcli image push --dry-run` is local: it checks the guard, but no tag
+`unemu image push --dry-run` is local: it checks the guard, but no tag
 rule, which only a push checks on the registry. The pipeline derives every
 tag itself from the recipe.
 
@@ -150,17 +174,17 @@ pipeline never moves an alias, so the order is exactly this:
 ## The pipeline
 
 ```sh
-python3 -I lib/publish.py --cli UPCLI [--store DIR] [--fetch] [--library DIR]...
+python3 -I lib/publish.py --cli UNEMU [--store DIR] [--fetch] [--library DIR]...
                           [--no-build] [--experimental RUN] [--skip-published]
                           [--push] [--report FILE] [RECIPE|FOLDER|REF]...
 ```
 
 | Option | Meaning |
 | --- | --- |
-| `--cli UPCLI` | the upcli binary; default `$UPCLI`; a name without a slash is looked up on `PATH` |
-| `--store DIR` | build into `DIR`, a new directory that is kept (default: a fresh store under `build/`, removed afterwards); with `--no-build`, the existing store an earlier run built, which upcli never reads (see the steps) |
-| `--fetch` | let `upcli recipe build` download a missing input from the URLs its recipe pins |
-| `--library DIR` | a folder where `upcli recipe build` looks for inputs by size and SHA-256 (repeatable) |
+| `--cli UNEMU` | the unemu binary; default `$UNEMU`; a name without a slash is looked up on `PATH` |
+| `--store DIR` | build into `DIR`, a new directory that is kept (default: a fresh store under `build/`, removed afterwards); with `--no-build`, the existing store an earlier run built, which unemu never reads (see the steps) |
+| `--fetch` | let `unemu recipe build` download a missing input from the URLs its recipe pins |
+| `--library DIR` | a folder where `unemu recipe build` looks for inputs by size and SHA-256 (repeatable) |
 | `--no-build` | build nothing: every selected set and package must already be in `--store` under its own ref, every byte of it checked against its pin |
 | `--experimental RUN` | push to the experimental targets (see below); `RUN` is the CI run id, from 1 |
 | `--skip-published` | read each pinned set's and package's own tag (and a set's alias) first; skip what the registry already serves (see below) |
@@ -168,7 +192,7 @@ python3 -I lib/publish.py --cli UPCLI [--store DIR] [--fetch] [--library DIR]...
 | `--report FILE` | also write the summary's rows as JSON (the CI reads whether anything is left to push) |
 | `RECIPE`, `FOLDER` or `REF` | select an open recipe file (`recipes/media/freedos/freedos-1.4.media.toml`), recipes below a folder (`recipes/media/freedos`) or one set or package by its ref (`unemu/media/ibm-pc/freedos:1.4-r1`, `unemu/firmware/ibm-pc/xub-r638-xtp-ata1f0:r1`; not an alias); default: every open recipe; an explicit selection including a private recipe is refused |
 
-The registry host is `UNEMU_REGISTRY_HOST`, checked as upcli checks one (a
+The registry host is `UNEMU_REGISTRY_HOST`, checked as unemu checks one (a
 name with a dot or a port, or `localhost`; no scheme or path). A dry run
 without it names `registry.unemu.dev`, which it contacts only for the
 anonymous reads of `--skip-published`.
@@ -182,7 +206,7 @@ A set or package that fails a step is not taken further.
    a repository under `unemu/media/` or `unemu/firmware/` and a tag of
    decision-38, and no ref, nor a set's release alias, appears twice. A
    refusal stops the run.
-2. The version check (above), then `upcli recipe check` over every open recipe:
+2. The version check (above), then `unemu recipe check` over every open recipe:
    a finding, or a recipe without its own `ok` line, stops the run. Drift
    (a work file that differs from a lock)
    is reported; a build writes the lock's record all the same, and CI
@@ -205,8 +229,8 @@ A set or package that fails a step is not taken further.
    the pin (the set is built again and only the alias is pushed), and a
    draft, which cannot be compared and ends `unpinned`. A failed read fails
    it.
-4. Each selected set or package is built with `upcli recipe build FILE
-   --store STORE` (with `--fetch` and `--library` as given). upcli finds
+4. Each selected set or package is built with `unemu recipe build FILE
+   --store STORE` (with `--fetch` and `--library` as given). unemu finds
    every input by size and SHA-256, runs the steps, checks every byte it
    makes against the recipe's lock and tags only the locked artifact; a
    draft is built as a draft. With `--no-build` nothing is built, a draft
@@ -217,12 +241,12 @@ A set or package that fails a step is not taken further.
    recipe's pin (else `mismatch`), and the manifest and every blob it names
    are copied into a clean store of the run's own as they are checked
    against their digests and sizes; a link, a missing blob or other bytes
-   fail it. upcli reads only that clean store, so every byte a push
-   uploads is one the pin names. Then `upcli
+   fail it. unemu reads only that clean store, so every byte a push
+   uploads is one the pin names. Then `unemu
    image media show` or `image firmware show` must name the ref with the
-   digest and end by reporting it pushable to `unemu/`, and `upcli image
+   digest and end by reporting it pushable to `unemu/`, and `unemu image
    push --dry-run`'s guard must allow the target, and a set's alias target
-   too. upcli runs with an environment and a registries file of its own.
+   too. unemu runs with an environment and a registries file of its own.
 5. The digest is compared with the recipe's `digest`: another digest is a
    `mismatch`, a draft is `unpinned`.
 6. With `--push`, and only when everything selected passed and is pinned,
@@ -263,16 +287,16 @@ workflow ([CI](#ci)), or by hand:
 ```sh
 export UNEMU_REGISTRY_HOST=registry.unemu.dev UNEMU_REGISTRY_USER=ACCOUNT
 read -rs UNEMU_REGISTRY_PASSWORD && export UNEMU_REGISTRY_PASSWORD
-python3 -I lib/publish.py --cli out/upcli/upcli --fetch --push recipes/media/freedos
+python3 -I lib/publish.py --cli out/unemu/unemu --fetch --push recipes/media/freedos
 ```
 
 What keeps a push safe:
 
 - **Credentials.** They come only from the environment
   (`UNEMU_REGISTRY_USER`, `UNEMU_REGISTRY_PASSWORD`), and a push also needs
-  `UNEMU_REGISTRY_HOST` set explicitly. They reach the `upcli image push`
+  `UNEMU_REGISTRY_HOST` set explicitly. They reach the `unemu image push`
   call alone, through its environment: never a command line or another
-  upcli command.
+  unemu command.
 - **All or nothing.** Nothing is pushed unless every selected set and
   package passed and is pinned; after the first failure, the rest are
   `held`.
@@ -284,10 +308,10 @@ What keeps a push safe:
 - **Revision tags never move.** A tag or alias that already serves the
   same digest is skipped (`present`, or `published` before anything is
   built with `--skip-published`); either one serving another digest
-  refuses the set or package before anything of it is pushed. upcli is
+  refuses the set or package before anything of it is pushed. unemu is
   never given `--move`, and sets and packages have no `latest`.
 - **The revision before its alias.** The revision tag is pushed and read
-  back first, then the alias, which upcli moves onto the newest revision
+  back first, then the alias, which unemu moves onto the newest revision
   the registry has only.
 - **A read-back after.** Each push is read back anonymously and must serve
   the pushed digest.
@@ -307,7 +331,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' "https://$host/v2/"   # 200: anonymous
 ```
 
 The first two must name the same addresses. The Python line asks the
-system resolver, as the pipeline and upcli do; `dig` and `nslookup` may
+system resolver, as the pipeline and unemu do; `dig` and `nslookup` may
 bypass per-domain resolver settings.
 
 ## Experimental targets
@@ -331,11 +355,13 @@ longer than 128 characters, is refused before anything is built.
 ## CI
 
 Three GitHub Actions workflows in [`.github/workflows/`](../.github/workflows/)
-run the checks and the publications. upcli builds the recipes, so no job
+run the checks and the publications. unemu builds the recipes, so no job
 that builds a recipe needs Nix; the devShell runs the README's checks and
-the script that makes the FreeDOS source archive. `upcli` is the release
-binary `lib/upcli.py fetch` takes, on the runner's Linux x86_64. The pins
-were made with the macOS arm64 upcli of the pinned release; the check
+the script that makes the FreeDOS source archive. On the runner's Linux
+x86_64, unemu's own `setup-unemu` action installs the release binary,
+checking the release's `SHA256SUMS` and the commit line as described above,
+without checking our archive pins. The recipes
+retain their original digests and locks, checked with unemu 0.0.4; the check
 workflow builds every recipe on Linux against the same locks.
 
 ### The rule: only what changed, never what is published
@@ -363,7 +389,7 @@ set or package](#replacing-a-published-set-or-package).
 - a change to the recipe, to its lock folder, to one of its bundled inputs
   or to the work file it names selects it; a deleted recipe is not
   selected;
-- a change to a shared input selects every recipe: `lib/`, `upcli.toml`
+- a change to a shared input selects every recipe: `lib/`, `unemu.toml`
   and `.github/workflows/`;
 - anything else selects nothing: `docs/`, `tests/` (the check command runs
   them on every change), the devShell (`flake.nix`, `flake.lock`: no
@@ -396,24 +422,25 @@ has a concurrency group of its own commit.
    then the selection: `BASE` is the pull request's base, or the commit
    before the push; the weekly and manual runs take every open recipe and
    script.
-2. **recipes**, on the runner's own Python: `lib/upcli.py fetch`;
+2. **recipes**, on the runner's own Python: `setup-unemu`;
    `lib/recipes.py check`, over every recipe including private ones, which fails on a finding, on
-   drift, on a draft and when upcli prints no `ok` line for a recipe or a
+   drift, on a draft and when unemu prints no `ok` line for a recipe or a
    work file a recipe names; then for the selected open recipes the dry run with
    `--fetch` into a fresh store (each built against its lock, shown,
    guard-checked and compared with its pin; the table goes to the job
-   summary), and `upcli recipe conformance` over them in a second scratch
+   summary), and `unemu recipe conformance` over them in a second scratch
    store from the downloaded inputs alone, which runs every step again.
    The inputs are cached between runs (`actions/cache`, keyed on the
    recipe files), each named by its SHA-256: a fresh download replaces a
    cached file, and a file whose bytes are not its name is dropped before
-   the build and before the cache is saved. upcli checks each input
+   the build and before the cache is saved. unemu checks each input
    against its pin, so the cache never decides a byte. The weekly run goes
    without it, to catch vanished mirrors.
 3. **prepared inputs**, in the devShell, when the selection names a script
    and every week: each script builds its input from scratch and stops
-   unless it has its pin; then the recipes beside it are built with that
-   output as a library. The script's downloads are cached, except weekly.
+   unless it has its pin; then `setup-unemu` installs the CLI and the
+   recipes beside the script are built with that output as a library.
+   The script's downloads are cached, except weekly.
 4. **check result** passes when the three jobs passed (the third may be
    skipped): the status to require for `main`.
 
@@ -429,7 +456,7 @@ On a push to `main` (and by hand, over every open recipe), one run at a time: a
 run waits for the one before it. No Nix. Two jobs:
 
 1. **build**, without an environment or a secret: the selection of the
-   push, as above; `lib/upcli.py fetch`; then `lib/publish.py
+   push, as above; `setup-unemu`; then `lib/publish.py
    --skip-published --experimental RUN --fetch --store STORE --report
    FILE RECIPE...`, `RUN` being the run's id (`github.run_id`). This builds
    and checks only what is not published yet; a draft or a failure stops
@@ -439,12 +466,12 @@ run waits for the one before it. No Nix. Two jobs:
    and its OCI layout `images/`, not its download cache) and the table go
    to the push job as an artifact kept for one day.
 2. **push**, on a fresh runner, in the environment `experimental`: a fresh
-   checkout, a fresh `lib/upcli.py fetch` (never from the artifact), the
+   checkout, a fresh `setup-unemu` installation (never from the artifact), the
    artifact, then one step with the credentials of `ci-experimental`
    (write on `unemu/experimental/**` only): `--skip-published --no-build
    --store handover/store --push --experimental RUN`. It builds and
    downloads nothing: every byte it pushes is checked against the recipe's
-   pin first and copied into a clean store that upcli reads (see the
+   pin first and copied into a clean store that unemu reads (see the
    steps), so a forged artifact can only fail the push. It pushes to
    `unemu/experimental/<kind>/ibm-pc/<name>:<release>-ci<RUN>-rN` (a
    package's `ci<RUN>-rN`), each set with its alias `<release>-ci<RUN>`.
@@ -460,7 +487,7 @@ open recipe, and a selection containing a private recipe is refused;
 a newline, carriage return or tab in it is refused. One run at a
 time, in a concurrency group of its own. Two jobs, as above:
 
-1. **build**, without an environment or a secret: `lib/publish.py
+1. **build**, without an environment or a secret: `setup-unemu`, then `lib/publish.py
    --skip-published --fetch SELECT...`, the dry run, which builds only what
    is not on `unemu/media/` or `unemu/firmware/` yet. Its table is in the
    run's summary before anything is approved. The built store goes to the
@@ -483,7 +510,7 @@ re-run the whole run (or start a new one), which builds again.
 packages that are not published yet and pushes them when they give their
 pinned digest; nothing is copied from `unemu/experimental/`. The guarantee
 is the lock and the digest pin: a set or package reaches `unemu/media/` or
-`unemu/firmware/` only when the pinned upcli builds exactly the digest its
+`unemu/firmware/` only when the pinned unemu builds exactly the digest its
 recipe pins, the digest an experimental push of the same recipe gave as
 well.
 
@@ -516,16 +543,17 @@ publish.yml, which takes every open recipe by default.
   repository variable of that name. GitHub hands a job's secrets to its
   runner when the job starts, so a step's environment is no boundary
   within a job: the boundary is the job. No job that refers to a secret
-  builds anything or downloads anything but the pinned upcli (checked
-  against `upcli.toml`) and the build job's artifact; the build jobs, which
-  download and build, have no environment and no secret.
+  builds anything or downloads anything but unemu, its release's
+  `SHA256SUMS` and the build job's artifact. `setup-unemu` checks the archive
+  against those sums and the commit line against the pinned commit; the
+  build jobs, which download and build, have no environment and no secret.
 - No job runs code of a recipe, which holds none: the recipes are data
-  that only the pinned upcli reads, and every input is checked by
+  that only the pinned unemu reads, and every input is checked by
   SHA-256. The push jobs run no Nix and take from the build job only its
   store, whether anything is left to push and, for experimental, the
   selection (publish's reads it from the input). The store is untrusted
   there: `lib/publish.py` checks every byte a push would upload against
-  the recipe's pin before upcli reads any of it, and upcli reads only the
+  the recipe's pin before unemu reads any of it, and unemu reads only the
   clean store those checked bytes are copied into. What a forged artifact
   can still do is fail the push, or offer a parser of `lib/publish.py`
   (Python's `json` on the index and manifests, at most 4 MiB each) hostile
@@ -548,14 +576,16 @@ GitHub-hosted runners use public DNS.
 
 ## Recipes on the registry
 
-`upcli recipe push` publishes a pinned recipe itself (to
-`unemu/recipes/<kind>/ibm-pc/<name>:<tag>`); upcli 0.0.3 accepts no other
-place, an experimental one neither. No recipe is published before
-unemupc's recipe format is frozen (its decision-35, point 8), so the
-workflows push sets and packages only. Publishing recipes later needs an
-account that may write `unemu/recipes/**`: the maintainer's registry step.
+`unemu recipe push` publishes a pinned recipe itself (to
+`unemu/recipes/<kind>/ibm-pc/<name>:<tag>`); unemu 0.0.4 accepts no other
+place, an experimental one neither. Recipe format **1.0 is frozen**
+(unemupc decision-43); its schema is the
+[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+Publishing recipe artifacts requires the maintainer's later decision and
+an account that may write `unemu/recipes/**`. No recipe push step is added
+by this migration; the workflows push open sets and packages only.
 
-## Gaps of upcli 0.0.3 that shape this pipeline
+## Gaps of unemu 0.0.4 that shape this pipeline
 
 - It cannot read a remote tag's digest (`image remote ls` lists tags
   only), so `lib/publish.py` keeps its own anonymous reads.

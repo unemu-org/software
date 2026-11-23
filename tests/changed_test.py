@@ -10,11 +10,13 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import tomllib
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -44,7 +46,7 @@ GIT_ENV = {
 
 def media(name, release, work=None, bundle=None):
     """A minimal media recipe of unemu/media/ibm-pc/NAME."""
-    text = 'recipe = "0.1"\n'
+    text = 'recipe = "1.0"\n'
     if work:
         text += f'work = "{work}"\n'
     text += (f'\n[media]\nname = "unemu/media/ibm-pc/{name}"\nplatform = "ibm-pc"\n'
@@ -55,7 +57,7 @@ def media(name, release, work=None, bundle=None):
     return text
 
 
-FIRMWARE = ('recipe = "0.1"\n\n[firmware]\nname = "unemu/firmware/ibm-pc/demo-bios"\nplatform = "ibm-pc"\n'
+FIRMWARE = ('recipe = "1.0"\n\n[firmware]\nname = "unemu/firmware/ibm-pc/demo-bios"\nplatform = "ibm-pc"\n'
             'revision = 1\n\n[license]\nexpression = "GPL-2.0-or-later"\n')
 
 ALPHA = "recipes/media/alpha/alpha-1.0.media.toml"
@@ -78,7 +80,7 @@ class Repository:
             ALPHA: media("alpha", "1.0", work="alpha", bundle="licenses.txt"),
             ALPHA + ".lock/sha256/" + "1" * 64: "lock\n",
             ALPHA_720K: media("alpha", "1.0-720k", work="alpha", bundle="licenses.txt"),
-            "recipes/media/alpha/alpha.work.toml": 'recipe = "0.1"\n\n[work]\nid = "alpha"\n',
+            "recipes/media/alpha/alpha.work.toml": 'recipe = "1.0"\n\n[work]\nid = "alpha"\n',
             "recipes/media/alpha/licenses.txt": "licences\n",
             "recipes/media/alpha/notes.txt": "notes\n",
             SCRIPT_PATH: "#!/usr/bin/env bash\n",
@@ -88,7 +90,7 @@ class Repository:
             BIOS: FIRMWARE,
         }
         for path in ("lib/source.sh", "lib/publish.py", "lib/recipes.py", "flake.nix", "flake.lock",
-                     "upcli.toml", "docs/recipes.md", "tests/publish_test.py", "README.md", "AGENTS.md",
+                     "unemu.toml", "docs/recipes.md", "tests/publish_test.py", "README.md", "AGENTS.md",
                      ".github/workflows/check.yml"):
             files[path] = f"{path}\n"
         for path, text in files.items():
@@ -152,6 +154,99 @@ def workflow_run(workflow, step):
     return textwrap.dedent("\n".join(lines)) + "\n"
 
 
+def workflow_steps(text):
+    """Read this repo's block-style step mappings without a YAML dependency.
+
+    Keep nested mappings (with/env) as text. A run's indented shell body
+    cannot supply a step field or an action input.
+    """
+    for block in re.split(r"(?m)^      - ", text)[1:]:
+        # End at the next job, ignoring its job-level keys and comments.
+        block = re.split(r"(?m)^  \S", block)[0]
+        fields = {}
+        key = None
+        for line in ("        " + block).splitlines():
+            match = re.fullmatch(r"        ([\w-]+):\s*(.*)", line)
+            if match:
+                key, value = match.groups()
+                if key in fields:
+                    raise AssertionError(f"duplicate step key: {key}")
+                fields[key] = value + "\n"
+            elif key and line.startswith("          "):
+                fields[key] += line[10:] + "\n"
+        yield fields
+
+
+def workflow_scalars(text):
+    """Parse the scalar inputs of a step's block mapping (with or env)."""
+    fields = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"([\w-]+):\s+(.+?)\s*(?: #.*)?", line)
+        if not match:
+            raise AssertionError(f"expected a block scalar mapping: {line}")
+        key, value = match.groups()
+        if key in fields:
+            raise AssertionError(f"duplicate mapping key: {key}")
+        fields[key] = value.strip("\"'")
+    return fields
+
+
+class WorkflowPolicy(unittest.TestCase):
+    def test_actions_follow_the_unemu_release_pin(self):
+        root = HERE.parent
+        pin = tomllib.loads((root / "unemu.toml").read_text())
+        action = "unemu-org/unemu/.github/actions/setup-unemu@" + pin["commit"]
+        for name in ("check.yml", "experimental.yml", "publish.yml"):
+            with self.subTest(workflow=name):
+                text = (root / ".github/workflows" / name).read_text()
+                self.assertNotRegex(text, r"lib/unemu\.py[\"']?[\s\\]+fetch\b")
+                # Check every uses:, including reusable job workflows. Requiring
+                # block syntax also prevents inline YAML from bypassing parsing.
+                uses = re.findall(r"(?m)^\s*(?:-\s+)?uses:\s*(\S+)", text)
+                self.assertTrue(uses, name)
+                self.assertEqual(len(uses), len(re.findall(r"\buses:", text)))
+                for use in uses:
+                    self.assertRegex(use.strip("\"'"), r"^[^@\s]+@[0-9a-fA-F]{40}$")
+                steps = list(workflow_steps(text))
+                installers = [s for s in steps if "setup-unemu" in s.get("uses", "")]
+                self.assertTrue(installers, name)
+                self.assertEqual(len(installers), sum("setup-unemu" in use for use in uses))
+                for step in installers:
+                    use = step["uses"].split(" #", 1)[0].strip().strip("\"'")
+                    self.assertEqual(use, action)
+                    inputs = workflow_scalars(step.get("with", ""))
+                    self.assertEqual(inputs.get("version"), pin["tag"])
+                    self.assertEqual(inputs.get("commit"), pin["commit"])
+                    self.assertTrue(step.get("id", "").strip())
+
+    def test_cli_outputs_and_registry_secrets_use_step_env(self):
+        for name in ("check.yml", "experimental.yml", "publish.yml"):
+            text = (HERE.parent / ".github/workflows" / name).read_text()
+            self.assertNotIn("$RUNNER_TEMP/unemu/unemu", text)
+            jobs = re.split(r"(?m)^  ([\w-]+):\s*\n", text.split("\njobs:\n", 1)[1])
+            for job, body in zip(jobs[1::2], jobs[2::2]):
+                with self.subTest(workflow=name, job=job):
+                    self.assertNotIn("secrets.", body.split("    steps:\n", 1)[0])
+                    if job != "push":
+                        self.assertNotIn("secrets.", body)
+                    steps = list(workflow_steps(body))
+                    installer_ids = {s["id"].strip() for s in steps if "setup-unemu" in s.get("uses", "")}
+                    for step in steps:
+                        run = step.get("run", "")
+                        self.assertNotIn("${{", run)
+                        if '"$UNEMU"' in run:
+                            env = workflow_scalars(step.get("env", ""))
+                            self.assertIn(env.get("UNEMU"),
+                                          {"${{ steps." + id_ + ".outputs.path }}" for id_ in installer_ids})
+                        if "secrets." in "".join(step.values()):
+                            self.assertEqual(job, "push")
+                            self.assertTrue(step["name"].startswith("Push to "))
+                            self.assertIn("secrets.", step.get("env", ""))
+                            self.assertNotIn("secrets.", "".join(v for k, v in step.items() if k != "env"))
+
+
 class WorkflowSelection(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -185,7 +280,7 @@ class WorkflowSelection(unittest.TestCase):
             selected = self.selection("check.yml", "Select the recipes and scripts", event)
             self.assertEqual(selected["recipes"], [BETA] if event in ("pull_request", "push") else EVERY)
         self.assertEqual(workflow_run("check.yml", "Check every recipe").strip(),
-                         'python3 -I lib/recipes.py check --cli "$RUNNER_TEMP/upcli/upcli"')
+                         'python3 -I lib/recipes.py check --cli "$UNEMU"')
         workflow = (SCRIPT.parent.parent / ".github/workflows/check.yml").read_text()
         self.assertIn("SELECTION: ${{ needs.tests.outputs.recipes }}", workflow)
         for name in ("Build the selected recipes against their locks", "Build them again from the inputs alone"):
@@ -222,7 +317,7 @@ class Changed(unittest.TestCase):
             "unemu/media/", "private/media/").replace('\n[license]\nexpression = "GPL-2.0-or-later"\n', "")
         self.repo.write(private, text)
         self.repo.write(folder + "/notes.txt", "Our note\n")
-        self.repo.write(folder + "/demo.work.toml", 'recipe = "0.1"\n[work]\nid = "demo"\n')
+        self.repo.write(folder + "/demo.work.toml", 'recipe = "1.0"\n[work]\nid = "demo"\n')
         # A script in the private tree must never become a prepared input.
         self.repo.write(folder + "/source/build.sh", "exit 99\n")
         self.repo.commit("private description")
@@ -291,7 +386,7 @@ class Changed(unittest.TestCase):
                 self.assertEqual(self.repo.selected(before), expected)
 
     def test_a_shared_input_selects_every_recipe(self):
-        for path in ("lib/source.sh", "lib/new-helper.py", "lib/publish.py", "upcli.toml",
+        for path in ("lib/source.sh", "lib/new-helper.py", "lib/publish.py", "unemu.toml",
                      ".github/workflows/check.yml", ".github/workflows/new.yml"):
             with self.subTest(path):
                 before = self.repo.git("rev-parse", "HEAD")
@@ -352,7 +447,7 @@ class Changed(unittest.TestCase):
             ("recipes/media/alpha/alpha.work.toml", []),
             ("recipes/media/beta/licenses.txt", []),
             ("lib/publish.py", []),
-            ("upcli.toml", []),
+            ("unemu.toml", []),
             ("docs/recipes.md", []),
         ):
             with self.subTest(path):
@@ -406,7 +501,7 @@ class Changed(unittest.TestCase):
         self.repo.write(ALPHA, media("alpha", "1.0", work="other"))
         before = self.repo.git("rev-parse", "HEAD")
         self.repo.git("add", "recipes/media/alpha/alpha.work.toml")
-        self.repo.write("recipes/media/alpha/alpha.work.toml", 'recipe = "0.1"\n# edited\n')
+        self.repo.write("recipes/media/alpha/alpha.work.toml", 'recipe = "1.0"\n# edited\n')
         self.repo.git("add", "recipes/media/alpha/alpha.work.toml")
         self.repo.git("commit", "-q", "-m", "work file only")
         self.assertEqual(self.repo.selected(before), [ALPHA_720K, ALPHA])

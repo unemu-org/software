@@ -5,7 +5,7 @@
 # Q495432 (Windows 3.1) identifies a version, not this whole work.
 # No release's hardware requirements are asserted for the whole work.
 
-recipe = "0.1"
+recipe = "1.0"
 
 [work]
 id = "windows"
