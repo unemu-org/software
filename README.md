@@ -68,7 +68,7 @@ the footer shows how to build and push to your own private registry.
 See [docs/recipes.md](docs/recipes.md#planning-from-local-files).
 
 Recipe format **1.0 is frozen** (unemupc decision-43); its schema is the
-[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.5/recipe-schema-1.0.json).
 Recipe artifacts publish through the approved `publish` workflow, after their
 open outputs. Private recipes publish as public text; their outputs stay private.
 

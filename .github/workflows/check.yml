@@ -104,10 +104,10 @@ jobs:
       # then runs unemu --version and checks commit:, not our archive pins.
       - name: Install unemu
         id: unemu
-        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        uses: unemu-org/unemu/.github/actions/setup-unemu@38408cd8669803a4fda1369ba9948e4eedc39539 # v0.0.5
         with:
-          version: v0.0.4
-          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
+          version: v0.0.5
+          commit: 38408cd8669803a4fda1369ba9948e4eedc39539
 
       # Every recipe, including private ones, whatever the build selection:
       # a finding, drift (a work file
@@ -235,10 +235,10 @@ jobs:
       # then runs unemu --version and checks commit:, not our archive pins.
       - name: Install unemu
         id: unemu
-        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        uses: unemu-org/unemu/.github/actions/setup-unemu@38408cd8669803a4fda1369ba9948e4eedc39539 # v0.0.5
         with:
-          version: v0.0.4
-          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
+          version: v0.0.5
+          commit: 38408cd8669803a4fda1369ba9948e4eedc39539
 
       # The recipes beside each script, built with what the script made (a
       # library, found before any URL): the asset the recipes download is

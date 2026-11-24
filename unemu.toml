@@ -31,20 +31,20 @@
 # The keys are exactly these: lib/unemu.py refuses any other, and a missing
 # or malformed one.
 
-commit = "ff37615ba3bd03d7e81132819cddf5633a7bd2a3"
-tag = "v0.0.4"
-version = "0.0.4"
+commit = "38408cd8669803a4fda1369ba9948e4eedc39539"
+tag = "v0.0.5"
+version = "0.0.5"
 
 [archive.x86_64-unknown-linux-gnu]
-file = "unemu-0.0.4-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "89e81a9c938e4b93118933a6a4482ed3cd3d6d9054225fc86277378c732ce28e"
-size = 24731568
-unemu_sha256 = "45b4942468b9050d647a73a8400db9b9dcec9d96d289658e33f1efc4c90f17a9"
-unemu_size = 75352904
+file = "unemu-0.0.5-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "c05dea12a8c47c603458e5f8fd5c903db4a98d3e7aff800cc47c0b16ef08b7e1"
+size = 25318999
+unemu_sha256 = "c2268bbe57c775c41fcc082b36993e30dd668661d15c062a7f77855dfcd566cf"
+unemu_size = 77207376
 
 [archive.aarch64-apple-darwin]
-file = "unemu-0.0.4-aarch64-apple-darwin.tar.gz"
-sha256 = "2560dac8572e08599667beba15ef1fa275888dfde5d952c09f995a56913fb4de"
-size = 21338222
-unemu_sha256 = "c1f385937b5f015a6461997f1243e12db9ed540e24e18b8b8265140a245b5a2c"
-unemu_size = 57674416
+file = "unemu-0.0.5-aarch64-apple-darwin.tar.gz"
+sha256 = "db05c1613dffeb06d0bbf4a9fcfdce48d0dc084d34f3f365385a36a2baa797cb"
+size = 21887581
+unemu_sha256 = "2ca8e0afea610c6921af50eb5f5d873460c24dcb9dbb599236e31626686cd5ba"
+unemu_size = 59219120

@@ -6,7 +6,7 @@ package, byte for byte the same on every run. It is a recipe file of
 ordered list of closed steps that start no process, inputs found by size
 and SHA-256, and a lock that pins every byte of the artifact it builds. The
 recipe format **1.0 is frozen** (unemupc decision-43). Its JSON Schema is
-the [recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+the [recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.5/recipe-schema-1.0.json).
 Both recipes and work files declare `recipe = "1.0"`; `"0.1"` is refused.
 The lock format, media types, annotations, work-file format and FAT defaults
 are unchanged, so existing output digests and lock bytes stay pinned. The rules behind
@@ -152,7 +152,7 @@ the comments of each file.
 | package date | firmware `[package] date` | the date the ROM itself carries (its BIOS date or version string) |
 | board | firmware `[package.fits]` | what the firmware catalogue records; stating it changes no byte |
 
-unemu 0.0.4's recipe format has no keys for a package's provenance (how
+unemu 0.0.5's recipe format has no keys for a package's provenance (how
 the ROM was made, from where, at which revision) or for the licence of an
 extra other than the source archive; our packages need neither for now.
 
@@ -211,7 +211,7 @@ repeatable and adds to those libraries, and `--store DIR` chooses an
 existing store. unemu searches by size and SHA-256, including zip members,
 the store and its download cache, bundled files beside the recipe, and
 libraries. The survey builds and downloads nothing, changes no images and
-contacts no registry. **Cache limitation:** unemu 0.0.4 may update its
+contacts no registry. **Cache limitation:** unemu 0.0.5 may update its
 library and decoded-content index caches in an existing store as its own
 bookkeeping; it has no option to disable those writes. The wrapper itself
 writes only its report to stdout. It keeps `LC_ALL=C` and `TZ=UTC`.

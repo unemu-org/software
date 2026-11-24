@@ -79,10 +79,10 @@ jobs:
       - name: Install unemu
         id: unemu
         if: steps.select.outputs.selection != '[]'
-        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        uses: unemu-org/unemu/.github/actions/setup-unemu@38408cd8669803a4fda1369ba9948e4eedc39539 # v0.0.5
         with:
-          version: v0.0.4
-          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
+          version: v0.0.5
+          commit: 38408cd8669803a4fda1369ba9948e4eedc39539
 
       # Published sets and packages are not built; drafts fail the run.
       - name: Build and check
@@ -169,10 +169,10 @@ jobs:
       # then runs unemu --version and checks commit:, not our archive pins.
       - name: Install unemu
         id: unemu
-        uses: unemu-org/unemu/.github/actions/setup-unemu@ff37615ba3bd03d7e81132819cddf5633a7bd2a3 # v0.0.4
+        uses: unemu-org/unemu/.github/actions/setup-unemu@38408cd8669803a4fda1369ba9948e4eedc39539 # v0.0.5
         with:
-          version: v0.0.4
-          commit: ff37615ba3bd03d7e81132819cddf5633a7bd2a3
+          version: v0.0.5
+          commit: 38408cd8669803a4fda1369ba9948e4eedc39539
 
       - name: Take the store of the build job
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

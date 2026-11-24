@@ -118,7 +118,7 @@ these; `lib/unemu.py` refuses any other key, a missing or malformed one, and
 | Key | What it holds |
 | --- | --- |
 | `commit` | the full commit the release's tag points to |
-| `tag`, `version` | the release's tag (`v0.0.4`) and version (`0.0.4`) |
+| `tag`, `version` | the release's tag (`v0.0.5`) and version (`0.0.5`) |
 | `[archive.<triple>]` | one table per platform: `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` |
 | `file` | the archive's name, `unemu-<version>-<triple>.tar.gz` |
 | `sha256`, `size` | the archive's SHA-256 and size in bytes |
@@ -160,7 +160,7 @@ Python on Apple silicon (Rosetta) the host reads as macOS x86_64, so pass
 
 In CI, every job that needs unemu installs it with upstream
 `unemu-org/unemu/.github/actions/setup-unemu`, pinned by full SHA to the
-release commit in `unemu.toml`. Its `version` input equals `tag` (`v0.0.4`),
+release commit in `unemu.toml`. Its `version` input equals `tag` (`v0.0.5`),
 and its `commit` input equals `commit`. The action downloads the release
 archive and its `SHA256SUMS`, checks the archive against that list, then
 runs `unemu --version` and checks its `commit:` line against the input.
@@ -234,7 +234,7 @@ published before unemupc's first public release (its decision-32, point
 the same tags, in the order of [Replacing a published set or
 package](#replacing-a-published-set-or-package). Sets and
 packages have no `latest`. Our locked artifacts retain their original
-`unemu.min-app-version` 0.0.3 annotation under unemu 0.0.4. `unemu recipe build` tags a set or package
+`unemu.min-app-version` 0.0.3 annotation under unemu 0.0.5. `unemu recipe build` tags a set or package
 under its own ref in the store (and a set's alias with it); every push
 names its `unemu/...` target explicitly.
 
@@ -459,7 +459,7 @@ the script that makes the FreeDOS source archive. On the runner's Linux
 x86_64, unemu's own `setup-unemu` action installs the release binary,
 checking the release's `SHA256SUMS` and the commit line as described above,
 without checking our archive pins. The recipes
-retain their original digests and locks, checked with unemu 0.0.4; the check
+retain their original digests and locks, checked with unemu 0.0.5; the check
 workflow builds every recipe on Linux against the same locks.
 
 ### The rule: only what changed, never what is published
@@ -696,25 +696,18 @@ GitHub-hosted runners use public DNS.
 ## Recipes on the registry
 
 `unemu recipe push` publishes a pinned recipe itself (to
-`unemu/recipes/<kind>/ibm-pc/<name>:<tag>`); unemu 0.0.4 accepts no other
+`unemu/recipes/<kind>/ibm-pc/<name>:<tag>`); unemu 0.0.5 accepts no other
 place, an experimental one neither. Recipe format **1.0 is frozen**
 (unemupc decision-43); its schema is the
-[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.4/recipe-schema-1.0.json).
+[recipe-schema-1.0.json release asset](https://github.com/unemu-org/unemu/releases/download/v0.0.5/recipe-schema-1.0.json).
 Recipes publish through the maintainer-approved `publish` workflow after
 their open outputs; private recipes publish public text without an output
 gate. Each recipe's first push needs approval of that run. `ci-promote`
 may write `unemu/recipes/**` (2026-11-23). See [Recipe artifacts](#recipe-artifacts)
 for the mapping, gates and anonymous byte-for-byte read-back.
 
-## Gaps of unemu 0.0.4 that shape this pipeline
+## Gaps of unemu 0.0.5 that shape this pipeline
 
-- Until ufe-uym.9.10 (unemu), `--fetch` with an external input without
-  URLs first downloads missing URL inputs over HTTPS into the first
-  `--library` (or a temporary library). Size and SHA-256 are verified
-  before an atomic rename to the SHA-256 filename, matching `check.yml`'s
-  download cache. That recipe then builds without `--fetch`. Bundled
-  inputs need no download; recipes whose external inputs all have URLs
-  keep the normal unemu fetch path.
 - It cannot read a remote tag's digest (`image remote ls` lists tags
   only), so `lib/publish.py` keeps its own anonymous reads.
 - `recipe check` exits 0 with drift, and `recipe conformance` with drafts
